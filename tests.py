@@ -9,9 +9,10 @@ Author: Jonathan Christensen
 
 import unittest
 
-from analyzer import (Athlete, Participant, Session, detect_recovery,
-                      format_report, heart_rate_zone, summarise,
-                      validate_observation)
+from analyzer import (Athlete, Participant, Session, compare_to_reference,
+                      detect_recovery, format_report, heart_rate_zone,
+                      summarise, validate_observation)
+from data_generator import generate_fitness_data
 
 
 def record(**overrides):
@@ -115,6 +116,81 @@ class TestParticipant(unittest.TestCase):
         self.assertEqual(MARA.recovery_thresholds()["heart_rate_drop"], 0.15)
         # The parent's activity threshold is inherited unchanged.
         self.assertEqual(MARA.recovery_thresholds()["activity_drop"], 0.30)
+
+
+class TestFromProfile(unittest.TestCase):
+    """The alternative constructor that reads the generator's profile."""
+
+    def setUp(self):
+        self.profile, _ = generate_fitness_data(
+            "P001", "resting", seed=42, number_of_windows=12)
+
+    def test_maps_every_profile_field(self):
+        person = Participant.from_profile(self.profile)
+        self.assertEqual(person.name, self.profile["participant_id"])
+        self.assertEqual(person.resting_heart_rate,
+                         self.profile["baseline_heart_rate"])
+        self.assertEqual(person.normal_temperature,
+                         self.profile["baseline_temperature"])
+        self.assertEqual(person.normal_skin_response,
+                         self.profile["baseline_skin_response"])
+
+    def test_athlete_variant_returns_an_athlete(self):
+        # Built with cls(), so the subclass gets its own type and rules.
+        trained = Athlete.from_profile(self.profile)
+        self.assertIsInstance(trained, Athlete)
+        self.assertEqual(trained.recovery_thresholds()["heart_rate_drop"], 0.15)
+
+    def test_rejects_a_profile_missing_fields(self):
+        with self.assertRaises(ValueError) as caught:
+            Participant.from_profile({"participant_id": "P001"})
+        self.assertIn("baseline_heart_rate", str(caught.exception))
+
+
+class TestSkinResponseComparison(unittest.TestCase):
+
+    def test_compared_when_the_participant_has_a_reference(self):
+        profile, observations = generate_fitness_data(
+            "P001", "moderate_activity", seed=42, number_of_windows=12)
+        person = Participant.from_profile(profile)
+        session = Session(person)
+        session.add_many(observations)
+
+        skin = compare_to_reference(summarise(session.observations),
+                                    person)["skin_response"]
+        self.assertEqual(skin["reference"], profile["baseline_skin_response"])
+        self.assertAlmostEqual(
+            skin["difference"], skin["average"] - skin["reference"])
+
+    def test_omitted_when_the_participant_has_no_reference(self):
+        session = Session(JONATHAN)
+        session.add_many([record(timestamp=t) for t in range(6)])
+        comparison = compare_to_reference(summarise(session.observations),
+                                          JONATHAN)
+        self.assertNotIn("skin_response", comparison)
+        self.assertIn("heart_rate", comparison)
+
+
+class TestGeneratedData(unittest.TestCase):
+
+    def test_poor_quality_rejects_every_record(self):
+        # The generator injects a fault into every record on a
+        # timestamp % 4 cycle, so none of the 12 survives validation.
+        profile, observations = generate_fitness_data(
+            "P001", "poor_quality", seed=42, number_of_windows=12)
+        result = analyse(Participant.from_profile(profile), observations)
+
+        self.assertEqual(result["observations"]["total"], 12)
+        self.assertEqual(result["observations"]["rejected"], 12)
+        self.assertEqual(result["observations"]["usable"], 0)
+        self.assertEqual(result["classification"], "insufficient data")
+
+    def test_same_seed_reproduces_the_same_data(self):
+        first = generate_fitness_data("P001", "recovery", seed=42,
+                                      number_of_windows=12)
+        second = generate_fitness_data("P001", "recovery", seed=42,
+                                       number_of_windows=12)
+        self.assertEqual(first, second)
 
 
 class TestCalculations(unittest.TestCase):
