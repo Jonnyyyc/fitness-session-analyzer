@@ -205,3 +205,41 @@ The trade-off, stated plainly: a session labelled "recovering" cannot be found b
 searching for "high activity", even though it contained high activity. For this
 assignment that is acceptable, because each session is reported individually
 rather than aggregated.
+
+---
+
+## Section 2 — Core classes
+
+**What was built**
+
+`analyzer.py`, holding all four classes from the Section 1 plan — `Participant`,
+`Athlete`, `Observation`, `Session` — plus the structural half of
+`validate_observation()`. No summaries, comparisons or classification yet.
+
+**Decisions and why**
+
+| Decision | Why |
+| --- | --- |
+| `heart_rate_bands()` repeats the literal multipliers in both classes instead of reading class constants | With constants (`ELEVATED_RATIO = 1.15`), `Athlete` could change its bands by reassigning them and would never need to override a method — the inheritance requirement would be met only on paper. Writing the method out in both classes makes the override real: the same call, answered differently. The cost is two numbers in two places, which is acceptable for four literals that the README documents anyway. |
+| `Athlete` overrides two methods, `heart_rate_bands()` and `describe()` | One override could be read as decoration. Two show the subclass genuinely behaves differently in more than one respect. |
+| The property setter runs at construction, not just on later assignment | `__init__` assigns to `self.resting_heart_rate` (no underscore), so the checks apply to the object's first value too. Assigning to `self._resting_heart_rate` directly would have left construction unchecked — the most likely place for a bad value to enter. |
+| Booleans are rejected explicitly everywhere a number is expected | In Python `bool` is a subclass of `int`, so `True` passes an `isinstance(value, int)` test and would silently become the number 1. A heart rate of `True` should be an error, not 1 bpm. |
+| `Session.add_observation()` returns True/False and records the reason, rather than raising | A session is expected to contain some bad records — that is the point of the assignment. Making the caller handle an exception per record would put try/except around every append in `main.py`. The exception is raised where the rule is broken (`from_dict`) and caught where the bookkeeping lives (`Session`). |
+| Rejection reasons are numbered by arrival order (`record 3: ...`) | Rejected records are not stored, so without a number the report can say *what* was wrong but not *which* reading. The count is of records offered, not accepted, so the numbering still points at the input. |
+| `ordered_observations()` sorts on demand rather than keeping the list sorted | Recovery detection is the only part that needs time order. Sorting once when asked is simpler than keeping an invariant on every insert, and the input is small. |
+
+**Alternatives rejected**
+
+- *A `Report` class and a `Validator` class* — both would hold no data and expose
+  a single method. That is a function with extra ceremony, and the brief
+  explicitly says more classes is not better.
+- *Storing rejected records as objects* — would allow richer reporting, but an
+  `Observation` that failed validation is an object whose fields cannot be
+  trusted. A reason string carries everything the report actually needs.
+
+**Known cosmetic issue**
+
+`heart_rate_bands()` returns values like `78.19999999999999` — ordinary binary
+floating point, not a bug. Rounding is a presentation concern and is handled in
+the report (Section 6) rather than by rounding the stored values, so no precision
+is lost from the intermediate maths.
