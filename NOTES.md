@@ -506,3 +506,71 @@ exactly on the band edges (93.9 below elevated, 94.0 elevated, 129.9 elevated,
 130.0 high); and the same summary yields "elevated" for an untrained
 participant but "high" for an athlete, confirming thresholds are read per
 person.
+
+---
+
+## Section 5 — Classification and recovery
+
+**What was built**
+
+`split_into_thirds()`, `detect_recovery()`, `classify_session()`, and
+`Session.analyse()` which assembles the result dictionary.
+
+**Decisions and why**
+
+| Decision | Why |
+| --- | --- |
+| Recovery compares the final third against the **peak** third, not the first third | A session that starts calm, works hard, then eases off has its peak in the *middle*. Measuring from the first third would compare a warm-up against a cooldown and report a modest rise — missing the recovery entirely. The peak third is found by taking whichever third has the highest average heart rate. |
+| Uneven counts put the remainder in the later thirds | With 5 observations the split is 1 / 2 / 2 rather than 2 / 2 / 1. The final third is the part the verdict rests on, and a one-reading final third would make the whole classification depend on a single number. |
+| `detect_recovery()` returns its evidence, not just a boolean | The explanation has to name the figures that decided the label, and the report has to show the drop percentages. Returning only `True`/`False` would force the caller to recompute them — a second implementation that could disagree with the first. |
+| When recovery is *not* detected, the result says which condition failed | "Not recovering" is unhelpful on its own. The `reason` field distinguishes "nothing to recover from" (peak never reached the elevated band) from "the decline was too shallow", which are different findings about the session. |
+| Activity drop is 0.0 rather than undefined when peak activity is 0.0 | Someone motionless throughout has a peak activity of exactly 0.0, and dividing by it would raise `ZeroDivisionError`. Nothing fell, so the drop is zero — which correctly fails the recovery test rather than crashing. |
+| `MODERATE_ACTIVITY_LEVEL` and `HIGH_ACTIVITY_LEVEL` are module constants, not participant values | `activity_level` is already a 0–1 scale that means the same thing for everyone, unlike heart rate where the same bpm means different efforts for different people. A per-person activity threshold would imply a personal reference the data does not carry. |
+| When a session is labelled "recovering", the explanation also says it met the intensity test | Otherwise a reader sees "recovering" on a session that was plainly hard and concludes the effort went unnoticed. The sentence is appended only when the session actually met the high- or moderate-activity test, so it never claims something untrue. |
+| `analyse()` returns a *copy* of `issues` | Without `list(...)`, a caller holding the result could append to it and silently alter the session's own record of what happened. |
+| `analyse()` adds a `session` key to the planned dictionary | The report needs a title for each scenario, and `main.py` prints several in a row. Minor addition to the Section 1 shape, recorded here. |
+
+**Alternatives rejected**
+
+- *Comparing the final third against the first third* — simpler to explain, but
+  wrong for the exact scenario the assignment asks for. See above.
+- *Halves instead of thirds* — a two-way split has no middle, so a session
+  cannot have a peak distinct from its start or end, and "worked hard then eased
+  off" becomes unrepresentable.
+- *Letting "high activity" win over "recovering"* — would make the label easier
+  to search for but throws away the more specific finding. Documented at length
+  in the Section 1 plan.
+
+**Verified — all five required scenarios plus three guard cases**
+
+| Scenario | Result |
+| --- | --- |
+| Resting | `resting` — 74.5 bpm below the 94.0 elevated band, activity 0.05 |
+| Moderate | `moderate activity` — 102.5 bpm reached elevated, activity 0.35 |
+| High | `high activity` — 147.5 bpm reached the 130.0 high band, activity 0.80 |
+| Activity then recovery | `recovering` — HR fell 32% (153.5 → 104.0), activity fell 76% |
+| Poor-quality / invalid | `insufficient data` — 4 of 6 records rejected, 2 usable |
+| Too few readings | `insufficient data` — 3 usable, 5 required |
+| Sitting still, HR drifting down | `resting`, **not** recovering — "peak third averaged 79.0 bpm, which never reached the elevated band (94.0 bpm)" |
+
+**The override, demonstrated**
+
+The decisive test for `Athlete.recovery_thresholds()` is a decline that falls
+*between* the two bars. Peak third 130 bpm, final third 116 bpm — a 10.8% drop,
+with activity falling 50%:
+
+| Participant | Required drop | Actual | Detected | Label |
+| --- | --- | --- | --- | --- |
+| `Participant` (resting 70) | 10% | 10.8% | yes | **recovering** |
+| `Athlete` (resting 45) | 15% | 10.8% | no | **moderate activity** |
+
+Identical readings, different verdict, decided solely by the overridden method.
+This is the example to cite in the README as evidence the inheritance is
+functional rather than decorative.
+
+**Known cosmetic issue**
+
+The "why not" message rounds to whole percents, so a 10.8% drop prints as
+"heart rate fell 11%, short of the 15% required". Accurate to the rounding, and
+the unrounded value is available in the result dictionary, but worth knowing
+when reading the two side by side.
