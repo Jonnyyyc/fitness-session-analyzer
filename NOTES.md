@@ -6,8 +6,8 @@ reasoning behind them — the README (Section 9) is written from this file.
 Project: Smart Fitness Session Analyzer (Option A)
 Author: Jonathan Christensen
 Student number: jonathan4495
-Repository: https://github.com/jonathan4495/fitness-session-analyzer
-  (GitHub account name to be confirmed — see Section 0 open questions)
+GitHub account: Jonnyyyc
+Repository: https://github.com/Jonnyyyc/fitness-session-analyzer
 
 ---
 
@@ -37,13 +37,17 @@ No program logic written yet.
   separate module (to confirm in Section 1).
 - *Creating truly empty files* — matches "empty files" literally, but see above.
 
-**Open questions**
+**Resolved**
 
-- `jonathan4495` is the student number. Whether the GitHub account uses the
-  same name is not yet confirmed — the clone URL in the README (Section 9) and
-  the push in Section 10 both depend on the answer.
-- Whether class code may live in its own module alongside the five required
-  files. Assumed yes; to be approved in Section 1.
+- `jonathan4495` is the student number, **not** the GitHub account name. The
+  GitHub account is `Jonnyyyc`, so the clone URL used in the README (Section 9)
+  and the push in Section 10 is
+  `https://github.com/Jonnyyyc/fitness-session-analyzer.git`.
+
+- Class code goes in its own module, `analyzer.py`, alongside the five required
+  files. Approved. `main.py` stays a thin entry point that only builds the
+  scenarios and prints reports, so `tests.py` can import the classes without
+  pulling in the printing code.
 
 **Environment note**
 
