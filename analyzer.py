@@ -31,15 +31,14 @@ VALUE_RANGES = {
     "signal_quality": (0.0, 1.0),
 }
 
-# Column headings for the report. Kept beside the units so the two
-# cannot drift apart.
+# Column headings for the report's summary table. Only the fields in
+# SUMMARY_FIELDS are ever labelled - timestamp orders the session and
+# signal_quality describes the sensor, so neither is summarised.
 FIELD_LABELS = {
-    "timestamp": "Timestamp",
     "heart_rate": "Heart rate",
     "skin_response": "Skin response",
     "temperature": "Temperature",
     "activity_level": "Activity level",
-    "signal_quality": "Signal quality",
 }
 
 # Decimal places used when the report prints each measurement. One
@@ -322,9 +321,9 @@ class Session:
         self.participant = participant
         self.label = label
         self.observations = []   # accepted Observation objects
-        self.issues = []         # everything notable, in arrival order
-        # The same notes split by kind, so the report can group them
-        # without parsing the text back apart.
+        # Notes kept split by kind, so the report can group them without
+        # parsing the text back apart. Each note names the record it came
+        # from, so arrival order is still recoverable from either list.
         self.flag_notes = []
         self.rejection_notes = []
         self.rejected_count = 0
@@ -337,17 +336,13 @@ class Session:
             observation = Observation.from_dict(raw)
         except ValueError as error:
             self.rejected_count += 1
-            note = f"record {self._received}: {error}"
-            self.issues.append(f"rejected - {note}")
-            self.rejection_notes.append(note)
+            self.rejection_notes.append(f"record {self._received}: {error}")
             return False
 
         # A flagged record still counts. The warning is recorded so the
         # report can say the reading was used despite being imperfect.
         for flag in observation.flags:
-            note = f"record {self._received}: {flag}"
-            self.issues.append(f"flagged - {note}")
-            self.flag_notes.append(note)
+            self.flag_notes.append(f"record {self._received}: {flag}")
 
         self.observations.append(observation)
         return True
@@ -413,7 +408,6 @@ class Session:
             "recovery": recovery,
             # Copies, so a caller holding the result cannot alter the
             # session's own record of what happened.
-            "issues": list(self.issues),
             "flag_notes": list(self.flag_notes),
             "rejection_notes": list(self.rejection_notes),
         }

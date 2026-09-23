@@ -180,7 +180,7 @@ participant for its numbers rather than carrying copies, which is what lets
 
 `Session.analyse()` returns keys: `participant`, `classification`, `explanation`,
 `observations` (`total` / `usable` / `rejected` / `flagged`), `summary`,
-`comparison`, `recovery`, `issues`.
+`comparison`, `recovery`, `flag_notes`, `rejection_notes`.
 
 ---
 
@@ -209,7 +209,7 @@ The draft had `Observation.from_dict` returning "an `Observation` or a rejection
 reason", which would have put a second copy of the rules inside the class.
 `validate_observation()` is now the only place the rules live. `from_dict` calls
 it and raises `ValueError(reason)` on failure; `Session` catches that and records
-the reason in `issues`. One rule set, one place to change it.
+the reason in `rejection_notes`. One rule set, one place to change it.
 
 **3. Unchanged after review:** minimum of 5 usable observations, the two
 signal-quality tiers, and the `Athlete` subclass.
@@ -424,7 +424,7 @@ down, rather than numbers buried in an `if`.
 | Signal quality is checked twice, in two different senses | A quality of 1.3 is *impossible* (rejected as out of range); a quality of 0.31 is possible but *untrustworthy* (rejected as below the usable cutoff). Different problems, different messages. Collapsing them would produce "signal quality 1.3 is below the cutoff", which is nonsense. |
 | `timestamp` has a lower bound but no upper bound | A session can last any length of time, so any ceiling would be invented. A negative timestamp is still impossible, so the lower bound is real. `None` in `VALUE_RANGES` means "no bound". |
 | `skin_response` gained an upper bound of 30 µS, which the Section 1 plan did not have | The plan only rejected negatives. But skin conductance during exercise sits in roughly 1–20 µS, and a reading of, say, 800 is a sensor fault rather than an extreme person — exactly the kind of impossible value the section is meant to catch. Leaving it unbounded would have let one broken reading dominate the average. Flagged here as a deliberate deviation from the approved plan, not an oversight. |
-| Flags are recorded in `Session.issues` alongside rejections, tagged `flagged:` vs `rejected:` | The report has to show both, and they read naturally as one ordered list of what happened to the input. The prefix keeps them distinguishable; `flagged_count` and `rejected_count` keep them countable separately. |
+| Flags are recorded separately from rejections | The report has to show both, and they are different events. `flagged_count` and `rejected_count` keep them countable separately, and `flag_notes` / `rejection_notes` keep the reasons apart. *(Originally a single tagged `issues` list; see "Section 11" below.)* |
 | Rejected records are still counted in `total_count` | `usable + rejected == total` must hold, otherwise the report cannot honestly say how many observations were received. Verified as an invariant in testing. |
 
 **Alternatives rejected**
@@ -527,7 +527,7 @@ person.
 | Activity drop is 0.0 rather than undefined when peak activity is 0.0 | Someone motionless throughout has a peak activity of exactly 0.0, and dividing by it would raise `ZeroDivisionError`. Nothing fell, so the drop is zero — which correctly fails the recovery test rather than crashing. |
 | `MODERATE_ACTIVITY_LEVEL` and `HIGH_ACTIVITY_LEVEL` are module constants, not participant values | `activity_level` is already a 0–1 scale that means the same thing for everyone, unlike heart rate where the same bpm means different efforts for different people. A per-person activity threshold would imply a personal reference the data does not carry. |
 | When a session is labelled "recovering", the explanation also says it met the intensity test | Otherwise a reader sees "recovering" on a session that was plainly hard and concludes the effort went unnoticed. The sentence is appended only when the session actually met the high- or moderate-activity test, so it never claims something untrue. |
-| `analyse()` returns a *copy* of `issues` | Without `list(...)`, a caller holding the result could append to it and silently alter the session's own record of what happened. |
+| `analyse()` returns *copies* of the note lists | Without `list(...)`, a caller holding the result could append to them and silently alter the session's own record of what happened. |
 | `analyse()` adds a `session` key to the planned dictionary | The report needs a title for each scenario, and `main.py` prints several in a row. Minor addition to the Section 1 shape, recorded here. |
 
 **Alternatives rejected**
@@ -582,8 +582,7 @@ when reading the two side by side.
 **What was built**
 
 `format_report(result)`, rendering the result dictionary as plain text in the
-seven sections specified. `Session` gained `flag_notes` and `rejection_notes`
-alongside `issues`.
+seven sections specified. `Session` gained `flag_notes` and `rejection_notes`.
 
 **Decisions and why**
 
@@ -591,8 +590,8 @@ alongside `issues`.
 | --- | --- |
 | `format_report()` **returns** a string rather than printing | Tests can then assert on the output directly, and `main.py` decides where it goes. A function that prints can only be tested by capturing stdout, which is more machinery for less certainty. `main.py` calls `print(format_report(result))`. |
 | Rounding happens only inside `format_report()` | Stored values keep full precision, so no intermediate calculation inherits a rounding error. The displayed figure is tidied at the last possible moment, which is also why the same value can be shown to 1 decimal in the table and 2 in the explanation without either being "wrong". |
-| `Session` stores `flag_notes` and `rejection_notes` as well as `issues` | The report has to show the two groups separately. The alternative was for `format_report()` to search each issue string for the word "flagged", which couples the report's correctness to the exact wording of a message elsewhere in the file — silently breaking if that wording is ever reworded. Three lists holding the same strings is mild duplication; string-parsing your own output is a latent bug. |
-| `issues` keeps every note in arrival order, tagged `flagged -` / `rejected -` | The chronological list is what a reader wants when asking "what happened to my data, in order". The grouped lists are what the report wants. Both are cheap. |
+| `Session` stores `flag_notes` and `rejection_notes` separately | The report has to show the two groups separately. The alternative was for `format_report()` to search each note for the word "flagged", which couples the report's correctness to the exact wording of a message elsewhere in the file — silently breaking if that wording is ever reworded. String-parsing your own output is a latent bug. |
+| ~~`issues` keeps every note in arrival order, tagged `flagged -` / `rejected -`~~ | ~~The chronological list is what a reader wants when asking "what happened to my data, in order".~~ **Superseded in Section 11** — the third list held nothing the other two did not, since each note already names its record number. |
 | Long sentences wrap with `textwrap` | The explanation and the recovery reason are full sentences of unpredictable length. Without wrapping they run off the edge of a terminal. `textwrap` is standard library. |
 | The recovery section always says something | Either the drops with their required thresholds, or the reason none was found. A blank section would read as "not checked" rather than "checked, and no". |
 | Empty summary and empty comparison print an explicit sentence | "No usable observations to summarise." is a finding. A blank space under a heading looks like a bug in the program. |
@@ -772,3 +771,67 @@ Both fenced report blocks appear verbatim in the output of a fresh
 `analyzer.py`, and `Athlete` was confirmed to override exactly
 `recovery_thresholds` and `describe` — not `heart_rate_bands`, as the README
 states.
+
+---
+
+## Section 10 — Final check and submission
+
+Requirement checklist verified programmatically against a fresh clone rather
+than from notes: 4 classes, composition confirmed in `Session.__init__`, 2
+properties with private backing attributes, `Athlete` overriding
+`recovery_thresholds` and `describe`, `Observation.from_dict` as the
+classmethod, 11 functions, `analyse()` returning an 11-key dictionary, 6
+scenarios, 28 tests.
+
+Fresh-clone test passed: cloned to a temporary folder, `python main.py`
+produced all six expected labels and `python -m unittest tests.py` reported 28
+tests OK. This is the check that proves the repository is self-contained and
+does not depend on a file that exists only on the development machine.
+
+Working tree clean, 8 tracked files, no `__pycache__`, `.venv`, `.pyc` or
+`.env`.
+
+**Push could not be run from the assistant's shell.** It is non-interactive with
+no attached terminal, so Git Credential Manager has no way to display a sign-in
+window and the push fails with "terminal prompts disabled". The push is run
+manually from an ordinary terminal instead. Not a repository problem.
+
+---
+
+## Section 11 — Removing redundancy
+
+Two pieces of dead weight removed after review.
+
+**1. `Session.issues` deleted.**
+
+The class kept three lists: `issues` (every note in arrival order, tagged
+`flagged -` or `rejected -`) plus `flag_notes` and `rejection_notes` holding the
+same strings grouped by kind. The Section 6 justification for the third list was
+that it preserved chronological order across both kinds.
+
+That justification does not survive scrutiny. Every note already begins
+`record N:`, so arrival order is recoverable from either grouped list by reading
+the record numbers. The combined list held no information the other two did not,
+and `format_report()` never read it — only the grouped lists were used. It was
+state maintained for a reader who never existed.
+
+Removed: the list, both `append` calls in `add_observation()`, and the `issues`
+key from the result dictionary. Nothing outside `analyzer.py` referenced it —
+`tests.py`, `main.py`, `sample_data.py` and `README.md` were all checked before
+deleting.
+
+**2. `FIELD_LABELS` trimmed to the four summarised fields.**
+
+It carried entries for `timestamp` and `signal_quality`, which are never
+labelled: they are deliberately excluded from `SUMMARY_FIELDS`, and the summary
+table is the only place `FIELD_LABELS` is read. The two extra entries implied
+those fields might one day be summarised, which contradicts the reasoning
+recorded in Section 4.
+
+`FIELD_UNITS` keeps all six entries and was left alone — `describe_value()` uses
+it to build rejection messages for every field in `VALUE_RANGES`, including
+`timestamp` and `signal_quality`. The two tables look parallel but are not, and
+trimming both would have broken the rejection messages.
+
+**Verified:** 28 tests still pass, `main.py` still produces the six expected
+labels, and both README example blocks still match real output.
