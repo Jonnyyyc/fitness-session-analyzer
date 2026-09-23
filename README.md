@@ -19,7 +19,7 @@ printed as a plain-text report that says how many observations were usable and
 why the session got the label it did.
 
 The program reads the output of the instructor-supplied
-`generate_fitness_data()` function. Five of the seven demonstration scenarios in
+`generate_fitness_data()` function. Five of the eight demonstration scenarios in
 `sample_data.py` are produced by that generator, so running `main.py` shows the
 analyzer working on the same data a marker would feed it.
 
@@ -86,7 +86,7 @@ as a trained participant.
 | --- | --- | --- |
 | `README.md` | This document. | Required by the brief |
 | `main.py` | Entry point. Loops over the sample scenarios and prints a report for each. Holds no logic beyond that loop. | Required by the brief |
-| `sample_data.py` | The seven demonstration scenarios, five built from the generator and two by hand. | Required by the brief |
+| `sample_data.py` | The eight demonstration scenarios, five built from the generator and three by hand. | Required by the brief |
 | `tests.py` | 35 unit tests across nine `TestCase` classes. | Required by the brief |
 | `requirements.txt` | Records that the project needs nothing outside the standard library. | Required by the brief |
 | `data_generator.py` | Produces simulated participant profiles and observations. Copied in unchanged and never edited. | Instructor-supplied |
@@ -454,12 +454,17 @@ REJECTED READINGS  (0 discarded)
   None.
 ```
 
-`main.py` runs seven scenarios in total. Five come from the generator (resting,
-moderate activity, high activity, recovery, poor quality). The sixth is that
-same recovery data judged as an `Athlete`. The seventh is a hand-written
-three-reading session, which has to be hand-written because
-`generate_fitness_data()` refuses fewer than six windows and cannot produce a
-session too short to judge.
+`main.py` runs eight scenarios in total. Five come from the generator (resting,
+moderate activity, high activity, recovery, poor quality). The other three are
+hand-written, each covering something the generator cannot produce:
+
+- the same recovery data judged as an `Athlete`, so the overridden recovery
+  threshold appears in ordinary output rather than only in a test
+- a degraded-sensor session of 10 readings, 3 rejected and 2 flagged, which is
+  the only scenario where a reading is kept despite being doubtful and the only
+  one where a session survives a faulty sensor and still earns a real label
+- a three-reading session, because `generate_fitness_data()` refuses fewer than
+  six windows and so cannot produce a session too short to judge
 
 ---
 

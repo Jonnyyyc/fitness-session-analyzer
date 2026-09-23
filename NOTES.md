@@ -870,9 +870,9 @@ does not need and the second is reference material rather than code.
 | `seed=42` and `number_of_windows=12`, fixed in `sample_data.py` | The generator is reproducible for a given seed, which is what lets the README paste real output and still have it match on someone else's machine. An unfixed seed would make the example blocks wrong on every run. |
 | Generated participants keep the default maximum heart rate of 190 | The profile carries a baseline heart rate but no maximum, so there is nothing to map. This is now recorded in the README limitations, because it means every generated participant has bands computed from a population figure rather than a measured one. |
 
-### The two hand-made scenarios, and why each survives
+### The three hand-made scenarios, and why each survives
 
-Five scenarios come from the generator. Two do not, and both have a reason
+Five scenarios come from the generator. Three do not, and each has a reason
 beyond preference.
 
 **The recovery data judged as an `Athlete`.** The observations are the same ones
@@ -882,6 +882,14 @@ the report comes from the subclass and nothing else. The report shows
 `15% required` instead of `10% required`. Without this scenario, an ordinary run
 of `main.py` would never exercise the override at all, and the inheritance would
 only be visible inside `tests.py`.
+
+**The degraded-sensor session.** Ten readings, three rejected and two flagged,
+and it still earns a real label. The generator sets every `poor_quality` signal
+below 0.55 and also breaks each reading outright, so nothing it produces ever
+lands in the 0.50 to 0.69 flagged band. This is therefore the only scenario in
+ordinary output where a reading is kept despite being doubtful, and the only one
+where a session survives a faulty sensor rather than collapsing under it. Added
+back after the reversal described below.
 
 **The three-reading session.** `generate_fitness_data()` raises `ValueError` for
 fewer than six windows, so it cannot produce a session too short to judge. The
@@ -902,26 +910,36 @@ failures: a faulty sensor that still supports a verdict, against perfect
 readings and too few of them. With the generator's version, poor quality
 produces the same label as the too-short session.
 
-I considered keeping the hand-written poor-quality scenario alongside the
-generated one so the degraded-but-usable case was still shown. I did not, for
-two reasons. The marker will run the generator, so the generator's behaviour is
-what the program has to be honest about. And a scenario whose only purpose is to
-demonstrate a nicer outcome than the real data produces is closer to decoration
-than evidence.
-
-What changed instead. The README claim that poor quality "still supports a
-verdict" was removed, because it is no longer true. `main.py` now prints
-`INSUFFICIENT DATA` twice, and the two are distinguished by the counts rather
-than the label: one session has 12 records of which none is usable, the other
+The README claim that poor quality "still supports a verdict" was removed,
+because it is no longer true of the generated scenario. `main.py` now prints
+`INSUFFICIENT DATA` twice, and the two are distinguished by their counts rather
+than their label: one session has 12 records of which none is usable, the other
 has 3 records all of which are fine. The rejection list on the poor-quality
 report names all 12 reasons, so the difference is visible without reading the
 label.
 
-The flagging path is the real loss here. No generated scenario produces a
-signal quality between 0.50 and 0.69, so the flagged-but-kept tier no longer
-appears in ordinary output. It is still covered by
-`test_signal_quality_boundaries` and by the report tests, but a reader of
-`main.py` alone would not see it.
+**A reversal, recorded because the first answer was wrong.** My initial decision
+was to drop the hand-written "cycle commute" scenario entirely and let the
+generator's version stand alone. The argument was that the marker runs the
+generator, so the generator's behaviour is what the program should be honest
+about, and that a scenario existing only to show a nicer outcome than the real
+data produces is closer to decoration than evidence.
+
+That argument missed something. Removing it did not only lose a gentler example,
+it lost the **only** demonstration of the flagged tier. No generated scenario
+produces a signal quality between 0.50 and 0.69, so with the hand-written
+session gone, every report in `main.py` printed `FLAGGED READINGS (0 kept)`. An
+entire branch of the validation logic, and one of the two outcomes the whole
+rejected-versus-flagged distinction exists to express, had become invisible in
+ordinary output. It was still covered by `test_signal_quality_boundaries`, but a
+reader of `main.py` alone would never have seen a reading kept despite being
+doubtful.
+
+So the scenario is back, as the eighth. It no longer exists to soften the
+generator's result, which is the version of it I was right to reject. It exists
+because it is the only place the flagged tier and a degraded-but-classified
+session appear at all, and the comment above it in `sample_data.py` says exactly
+that.
 
 ### Tests added
 
@@ -942,7 +960,7 @@ restored and verified identical afterwards.
 
 | | Before | Now |
 | --- | --- | --- |
-| Scenarios in `main.py` | 6 | 7 |
+| Scenarios in `main.py` | 6 | 8 |
 | Tests | 28 | 35 |
 | Tracked files | 8 | 9 |
 | `TestCase` classes | 6 | 9 |
@@ -966,5 +984,7 @@ requirement, so both the plain and the trained version are labelled
 `test_between_the_bars_separates_participant_from_athlete`, which uses a
 hand-built 10.8% drop sitting between the two bars.
 
-Fresh clone runs clean: seven scenarios with the expected labels, 35 tests OK.
-Both README example blocks match real output.
+Fresh clone runs clean: eight scenarios with the expected labels, 35 tests OK.
+Both README example blocks match real output. The restored degraded-sensor
+session reports `total=10 usable=7 flagged=2 rejected=3` and is classified as
+`moderate activity`, which puts the flagged tier back into ordinary output.
