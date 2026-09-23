@@ -16,13 +16,25 @@ MEASUREMENT_FIELDS = (
 )
 
 
+def require_number(label, value):
+    """Raise ValueError unless value is a real number.
+
+    Booleans are refused: in Python bool subclasses int, so True would
+    otherwise be accepted as the number 1, and a heart rate of True
+    should be an error rather than 1 bpm.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a number, got {type(value).__name__}")
+    return value
+
+
 def validate_observation(raw):
     """Check one raw sensor record.
 
     Returns (True, None) when the record is acceptable, otherwise
     (False, reason) where reason is readable plain English.
 
-    This function is the single place the validation rules live. Nothing
+    This function is the single place the observation rules live. Nothing
     else in the program re-implements them. Section 3 extends it with the
     impossible-value ranges and the signal-quality tiers; for now it
     covers the structural checks only.
@@ -34,11 +46,10 @@ def validate_observation(raw):
         if field not in raw:
             return False, f"missing field '{field}'"
 
-        value = raw[field]
-        # bool is a subclass of int in Python, so True would otherwise be
-        # accepted as the number 1.
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return False, f"'{field}' is not a number (got {value!r})"
+        try:
+            require_number(f"'{field}'", raw[field])
+        except ValueError as error:
+            return False, str(error)
 
     return True, None
 
@@ -46,17 +57,23 @@ def validate_observation(raw):
 class Participant:
     """A person and the reference measurements taken when they are at rest.
 
-    The resting heart rate is the denominator of every comparison the
-    program makes, so it is kept private and reached through a property
-    that refuses impossible values.
+    The resting heart rate anchors every comparison the program makes,
+    so it is kept private and reached through a property that refuses
+    impossible values.
     """
 
-    def __init__(self, name, resting_heart_rate, normal_temperature=33.0):
+    def __init__(self, name, resting_heart_rate, max_heart_rate=190,
+                 normal_temperature=33.0):
         self.name = name
         self.normal_temperature = normal_temperature
-        # Assigning here runs the property setter below, so the check
-        # applies to construction as well as to later changes.
+        # Set before the resting rate so its setter can tell that there is
+        # no maximum to cross-check against yet.
+        self._max_heart_rate = None
+        # Assigning to the property names (no underscore) runs the setters
+        # below, so the checks apply to construction as well as to later
+        # changes.
         self.resting_heart_rate = resting_heart_rate
+        self.max_heart_rate = max_heart_rate
 
     @property
     def resting_heart_rate(self):
@@ -64,48 +81,78 @@ class Participant:
 
     @resting_heart_rate.setter
     def resting_heart_rate(self, value):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            given_type = type(value).__name__
-            raise ValueError(f"resting heart rate must be a number, got {given_type}")
+        require_number("resting heart rate", value)
         if not 20 <= value <= 120:
             raise ValueError(f"resting heart rate {value} is outside 20-120 bpm")
+        if self._max_heart_rate is not None and value >= self._max_heart_rate:
+            raise ValueError(
+                f"resting heart rate {value} is not below the maximum "
+                f"{self._max_heart_rate}"
+            )
         self._resting_heart_rate = value
 
-    def heart_rate_bands(self):
-        """Heart rates at which *this* person counts as elevated or high.
+    @property
+    def max_heart_rate(self):
+        return self._max_heart_rate
 
-        Expressed as multiples of their own resting rate, so the same
-        thresholds mean the same effort for different people.
+    @max_heart_rate.setter
+    def max_heart_rate(self, value):
+        require_number("maximum heart rate", value)
+        if not 100 <= value <= 230:
+            raise ValueError(f"maximum heart rate {value} is outside 100-230 bpm")
+        if value <= self._resting_heart_rate:
+            raise ValueError(
+                f"maximum heart rate {value} is not above the resting rate "
+                f"{self._resting_heart_rate}"
+            )
+        self._max_heart_rate = value
+
+    def heart_rate_bands(self):
+        """Absolute bpm at which this person counts as elevated or high.
+
+        Based on heart rate reserve: the span between resting and maximum
+        is what the person actually has available to use, so a percentage
+        of that span means the same amount of effort for everyone. This
+        is why a trained person needs no special case - their lower
+        resting rate widens their reserve, and the formula uses it.
         """
+        reserve = self.max_heart_rate - self.resting_heart_rate
         return {
-            "elevated": self.resting_heart_rate * 1.15,
-            "high": self.resting_heart_rate * 1.50,
+            "elevated": self.resting_heart_rate + 0.20 * reserve,
+            "high": self.resting_heart_rate + 0.50 * reserve,
         }
 
+    def recovery_thresholds(self):
+        """How far heart rate and activity must fall to count as recovery.
+
+        Fractions of the session's peak third, not absolute values.
+        """
+        return {"heart_rate_drop": 0.10, "activity_drop": 0.30}
+
     def describe(self):
-        return f"{self.name} (resting HR {self.resting_heart_rate} bpm)"
+        return (f"{self.name} (resting HR {self.resting_heart_rate} bpm, "
+                f"max {self.max_heart_rate} bpm)")
 
 
 class Athlete(Participant):
-    """A trained participant, whose bands sit higher than the default.
+    """A trained participant. Recovers faster, so recovery is judged harder.
 
-    HR ratio divides by the resting heart rate, and a trained person's
-    resting rate is lower - a smaller denominator. The same absolute
-    working heart rate therefore produces a larger ratio for them. At
-    140 bpm an untrained person resting at 70 sits at ratio 2.00, while
-    an athlete resting at 45 sits at 3.11 for identical effort. Using the
-    default bands would label an athlete's easy work as high activity,
-    so the bands are raised to absorb the smaller denominator.
+    The heart rate bands need no override - heart rate reserve already
+    accounts for a low resting rate. What does differ is the way a
+    trained person's heart rate behaves *after* effort: it falls quickly
+    and steeply. A 10% dip that would signal a genuine cooldown in an
+    untrained person is unremarkable in an athlete, so the bar is raised
+    to 15% to avoid reading ordinary fluctuation as a recovery phase.
     """
 
-    def heart_rate_bands(self):
-        return {
-            "elevated": self.resting_heart_rate * 1.25,
-            "high": self.resting_heart_rate * 1.70,
-        }
+    def recovery_thresholds(self):
+        thresholds = super().recovery_thresholds()
+        thresholds["heart_rate_drop"] = 0.15
+        return thresholds
 
     def describe(self):
-        return f"{self.name} (trained, resting HR {self.resting_heart_rate} bpm)"
+        return (f"{self.name} (trained, resting HR {self.resting_heart_rate} bpm, "
+                f"max {self.max_heart_rate} bpm)")
 
 
 class Observation:

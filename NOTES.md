@@ -63,12 +63,18 @@ will document both.
 Approved with four changes (recorded under "Corrections" below). No code written
 in this section.
 
+> **Revised during Section 2.** The heart-rate-ratio approach described here was
+> replaced by heart rate reserve, and the `Athlete` override moved from
+> `heart_rate_bands()` to `recovery_thresholds()`. The tables below have been
+> updated to the current design; see "Section 2 revision — heart rate reserve"
+> for what changed and why.
+
 ### Classes
 
 | Class | Responsibility |
 | --- | --- |
-| `Participant` | Who the person is, plus their reference values (resting heart rate, normal skin temperature). Converts a resting heart rate into the bands that count as elevated / high **for that person**. |
-| `Athlete(Participant)` | Same role, different bands. Overrides `heart_rate_bands()`. |
+| `Participant` | Who the person is, plus their reference values (resting heart rate, maximum heart rate, normal skin temperature). Owns the two methods that turn those into thresholds: `heart_rate_bands()` and `recovery_thresholds()`. |
+| `Athlete(Participant)` | Same role, stricter recovery. Overrides `recovery_thresholds()` and `describe()`. |
 | `Observation` | A single sensor reading — the six-field record from the brief. |
 | `Session` | One recording: one `Participant` plus a list of `Observation`s. Separates usable from rejected readings and produces the result dictionary. |
 
@@ -81,8 +87,8 @@ extra ceremony around it.
 | Concept | Location | Reasoning |
 | --- | --- | --- |
 | Composition | `Session` holds a `Participant` and a list of `Observation`s | A session is not a kind of participant; it *contains* one. |
-| Private attribute + `@property` | `Participant._resting_heart_rate`, read via the `resting_heart_rate` property | Every comparison in the program divides by this value, so a zero or negative would break the arithmetic. The property is the checked gate that stops it. |
-| Inheritance + overriding | `Athlete.heart_rate_bands()` overrides `Participant.heart_rate_bands()` | Same question, genuinely different answer — see "Athlete thresholds" below. |
+| Private attribute + `@property` | `Participant._resting_heart_rate` and `_max_heart_rate`, read via properties | Both anchor every threshold the program produces. The setters additionally cross-check each other, so a participant can never exist with a resting rate at or above their maximum — which would make the reserve zero or negative and the bands meaningless. |
+| Inheritance + overriding | `Athlete.recovery_thresholds()` and `Athlete.describe()` override `Participant`'s | Same question, genuinely different answer — see "Section 2 revision" below. |
 | `@classmethod` | `Observation.from_dict(raw)` | An alternative constructor. The program's real input format is the dict from the brief, so building straight from one is the natural entry point. |
 
 ### Standalone functions (all in `analyzer.py`)
@@ -92,10 +98,14 @@ extra ceremony around it.
 | `validate_observation(raw)` | validation | The single place the rules live. Returns whether a raw record is acceptable and a plain-English reason when it is not. |
 | `summarise(observations)` | calculation | Average, minimum, maximum per measurement. |
 | `compare_to_reference(summary, participant)` | calculation | Distance from the participant's own normal values. |
-| `detect_recovery(observations)` | calculation | Did heart rate **and** activity both fall near the end? |
+| `detect_recovery(observations, participant)` | calculation | Did heart rate **and** activity both fall near the end? Takes the participant so it can ask for `recovery_thresholds()` rather than holding numbers of its own. |
 | `format_report(result)` | presentation | Result dictionary → readable console text. |
 
-Five, against a required minimum of four.
+Plus `require_number(label, value)`, a one-line helper shared by the property
+setters and `validate_observation()`, so "is this a number, and not a boolean"
+is written once rather than in five places.
+
+Six, against a required minimum of four.
 
 ### Validation rules
 
@@ -127,8 +137,19 @@ boundary is — the point is that it is stated and defensible rather than implic
 
 Two figures are derived from the usable observations:
 
-- **HR ratio** = mean heart rate ÷ participant's resting heart rate
+- **Mean heart rate**, in bpm, compared against `participant.heart_rate_bands()`
 - **Mean activity** = mean of `activity_level`
+
+The bands come from heart rate reserve, the span between a person's resting and
+maximum rate:
+
+```
+reserve  = max_heart_rate - resting_heart_rate
+elevated = resting_heart_rate + 0.20 * reserve
+high     = resting_heart_rate + 0.50 * reserve
+```
+
+`max_heart_rate` defaults to 190 and can be passed per participant.
 
 Checks run in order; first match wins:
 
@@ -136,18 +157,24 @@ Checks run in order; first match wins:
 | --- | --- | --- |
 | 1 | insufficient data | Fewer than 5 usable observations |
 | 2 | recovering | Recovery detected (below) |
-| 3 | high activity | HR ratio ≥ 1.50 **or** mean activity ≥ 0.60 |
-| 4 | moderate activity | HR ratio ≥ 1.15 **or** mean activity ≥ 0.20 |
+| 3 | high activity | Mean HR ≥ the **high** band **or** mean activity ≥ 0.60 |
+| 4 | moderate activity | Mean HR ≥ the **elevated** band **or** mean activity ≥ 0.20 |
 | 5 | resting | Everything else |
 
 Recovery requires all three, comparing the **final third** against the **peak third**:
 
-1. Mean heart rate has fallen by ≥ 10%
-2. Mean activity has fallen by ≥ 30%
-3. The peak third reached HR ratio ≥ 1.30 — i.e. there was something to recover from
+1. Mean heart rate has fallen by at least `recovery_thresholds()["heart_rate_drop"]`
+2. Mean activity has fallen by at least `recovery_thresholds()["activity_drop"]`
+3. The peak third's mean heart rate reached the **elevated** band — i.e. there
+   was something to recover from
 
 Condition 3 exists because without it, a person sitting still whose heart rate
 drifts down by 10% would be labelled "recovering".
+
+**No threshold is written anywhere outside `heart_rate_bands()` and
+`recovery_thresholds()`.** `classify_session()` and `detect_recovery()` ask the
+participant for its numbers rather than carrying copies, which is what lets
+`Athlete` change the behaviour by overriding one method.
 
 ### Result dictionary
 
@@ -159,7 +186,8 @@ drifts down by 10% would be labelled "recovering".
 
 ### Corrections made during approval
 
-**1. Athlete thresholds were backwards — raised, not lowered.**
+**1. Athlete thresholds were backwards — raised, not lowered.** *(Superseded —
+see "Section 2 revision" below. Kept because it is the reasoning that led there.)*
 
 The first draft lowered the athlete's bands (elevated 1.10×, high 1.35×) on the
 reasoning that a trained person's heart rate "climbs proportionally less". That
@@ -172,7 +200,7 @@ Worked example: at a working rate of 140 bpm, an untrained person resting at
 effort, a much larger ratio. Applying the untrained bands to the athlete would
 mark them "high activity" during what is, for them, easy work.
 
-Final athlete bands: **elevated 1.25×, high 1.70×** — raised relative to the
+Corrected athlete bands: **elevated 1.25×, high 1.70×** — raised relative to the
 base class, to absorb the smaller denominator.
 
 **2. `from_dict` no longer carries its own validation.**
@@ -243,3 +271,94 @@ rather than aggregated.
 floating point, not a bug. Rounding is a presentation concern and is handled in
 the report (Section 6) rather than by rounding the stored values, so no precision
 is lost from the intermediate maths.
+
+---
+
+## Section 2 revision — heart rate reserve
+
+Reviewed after Section 2 was committed, and the threshold model was replaced.
+This supersedes Correction 1 above.
+
+### Why the ratio approach was wrong
+
+Both the original plan and its correction measured effort as
+`mean heart rate ÷ resting heart rate`. Correcting the *direction* of the
+athlete adjustment did not fix the underlying problem: **a ratio to resting
+heart rate is not a measure of effort.**
+
+A ratio treats the resting rate as the only thing that varies between people,
+and silently assumes everyone has the same ceiling. They do not. The quantity a
+person actually has available is the span between their resting rate and their
+maximum — the **heart rate reserve**. Two people with the same resting rate but
+different maxima have different amounts of room to work with, and a ratio cannot
+see that difference at all.
+
+The ratio model also produced the absurdity that a low resting heart rate — a
+sign of *fitness* — inflated the effort score. That is what forced the
+`Athlete` subclass to exist: it was a patch compensating for a distortion the
+formula itself introduced. A special case whose only job is to undo the base
+formula's error is a sign the base formula is wrong, not a sign the subclass is
+needed.
+
+### What replaces it
+
+Heart rate reserve, the standard approach (the Karvonen method):
+
+```
+reserve  = max_heart_rate - resting_heart_rate
+elevated = resting_heart_rate + 0.20 * reserve
+high     = resting_heart_rate + 0.50 * reserve
+```
+
+`heart_rate_bands()` now returns **absolute bpm**, not multipliers, and
+`Participant` takes `max_heart_rate=190` as an optional argument.
+
+Worked comparison at 140 bpm, both with max 190:
+
+| | Untrained, resting 70 | Athlete, resting 45 |
+| --- | --- | --- |
+| Reserve | 120 bpm | 145 bpm |
+| Elevated band | 94.0 bpm | 74.0 bpm |
+| High band | 130.0 bpm | 117.5 bpm |
+| At 140 bpm | above high | above high |
+| Old ratio | 2.00 | 3.11 |
+
+Both are correctly placed above their high band, using one formula and no
+special case. The athlete's bands come out *lower* in absolute bpm, which is
+right: a larger reserve means each beat above resting represents a smaller
+share of what they have available, so they cross into a given effort zone at a
+lower absolute rate than the ratio model implied.
+
+**`Athlete` no longer overrides `heart_rate_bands()`.** The reserve formula
+already accounts for a low resting rate, so the override would be redundant —
+and a redundant override is worse than none, because it hides that the base
+formula is doing the work.
+
+### Where the Athlete override moved
+
+`Participant.recovery_thresholds()` returns
+`{"heart_rate_drop": 0.10, "activity_drop": 0.30}`. `Athlete` overrides it,
+raising `heart_rate_drop` to **0.15**.
+
+The justification is about a genuinely different physiological behaviour rather
+than a units artefact. A trained person's heart rate falls faster and more
+steeply once effort stops. A 10% dip that means a real cooldown in an untrained
+person is within ordinary fluctuation for an athlete, so requiring 15% stops
+the program reading normal variation as a recovery phase. The parent's
+`activity_drop` is kept unchanged via `super()`, because how quickly someone
+stops *moving* is not a function of fitness.
+
+This is a better override than the one it replaces: it survives the question
+"would this still be needed if the formula were right?" — which the old one
+did not.
+
+### Consequence for Sections 4 and 5
+
+`classify_session()` compares mean heart rate against
+`participant.heart_rate_bands()`. `detect_recovery()` takes the participant and
+reads `participant.recovery_thresholds()`. The "something to recover from"
+check becomes: *the peak third's mean heart rate reached the elevated band*.
+
+No threshold is hard-coded outside those two methods. That rule is what makes
+the subclass work — if `detect_recovery()` held its own copy of 0.10, an
+`Athlete` would silently be judged by the untrained numbers.
