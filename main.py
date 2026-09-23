@@ -1,4 +1,4 @@
-"""Smart Fitness Session Analyzer — entry point.
+"""Smart Fitness Session Analyzer: entry point.
 
 Runs every sample scenario and prints its report.
 

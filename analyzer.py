@@ -1,4 +1,4 @@
-"""Smart Fitness Session Analyzer — core classes.
+"""Smart Fitness Session Analyzer: core classes.
 
 Standard library only.
 

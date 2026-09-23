@@ -1,2 +1,3 @@
-# Standard library only — no external packages required.
-# Uses: statistics, textwrap, unittest (all built into Python).
+# Standard library only. No external packages required.
+# Uses: statistics, textwrap, unittest, and random (used by the
+# instructor-supplied data_generator.py). All built into Python.
