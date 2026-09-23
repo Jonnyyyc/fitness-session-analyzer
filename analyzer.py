@@ -6,6 +6,7 @@ Author: Jonathan Christensen
 """
 
 import statistics
+import textwrap
 
 # Every sensor record must carry these six fields, in this spelling.
 MEASUREMENT_FIELDS = (
@@ -30,7 +31,30 @@ VALUE_RANGES = {
     "signal_quality": (0.0, 1.0),
 }
 
-# Units used only to make rejection messages readable.
+# Column headings for the report. Kept beside the units so the two
+# cannot drift apart.
+FIELD_LABELS = {
+    "timestamp": "Timestamp",
+    "heart_rate": "Heart rate",
+    "skin_response": "Skin response",
+    "temperature": "Temperature",
+    "activity_level": "Activity level",
+    "signal_quality": "Signal quality",
+}
+
+# Decimal places used when the report prints each measurement. One
+# decimal suits the sensor readings, but activity_level is a 0-1 scale
+# where one decimal leaves only ten possible values and anything under
+# 0.05 collapses to zero - so it gets two, matching the precision the
+# classification explanation quotes.
+FIELD_DECIMALS = {
+    "heart_rate": 1,
+    "skin_response": 1,
+    "temperature": 1,
+    "activity_level": 2,
+}
+
+# Units used to make rejection messages and the report readable.
 FIELD_UNITS = {
     "timestamp": "s",
     "heart_rate": "bpm",
@@ -298,7 +322,11 @@ class Session:
         self.participant = participant
         self.label = label
         self.observations = []   # accepted Observation objects
-        self.issues = []         # why records were turned away
+        self.issues = []         # everything notable, in arrival order
+        # The same notes split by kind, so the report can group them
+        # without parsing the text back apart.
+        self.flag_notes = []
+        self.rejection_notes = []
         self.rejected_count = 0
         self._received = 0       # how many raw records were offered
 
@@ -309,13 +337,17 @@ class Session:
             observation = Observation.from_dict(raw)
         except ValueError as error:
             self.rejected_count += 1
-            self.issues.append(f"record {self._received} rejected: {error}")
+            note = f"record {self._received}: {error}"
+            self.issues.append(f"rejected - {note}")
+            self.rejection_notes.append(note)
             return False
 
         # A flagged record still counts. The warning is recorded so the
         # report can say the reading was used despite being imperfect.
         for flag in observation.flags:
-            self.issues.append(f"record {self._received} flagged: {flag}, kept")
+            note = f"record {self._received}: {flag}"
+            self.issues.append(f"flagged - {note}")
+            self.flag_notes.append(note)
 
         self.observations.append(observation)
         return True
@@ -379,9 +411,11 @@ class Session:
             "summary": summary,
             "comparison": comparison,
             "recovery": recovery,
-            # A copy, so a caller holding the result cannot alter the
+            # Copies, so a caller holding the result cannot alter the
             # session's own record of what happened.
             "issues": list(self.issues),
+            "flag_notes": list(self.flag_notes),
+            "rejection_notes": list(self.rejection_notes),
         }
 
     def __repr__(self):
@@ -660,3 +694,119 @@ def classify_session(summary, participant, usable_count, recovery):
             f"below the elevated band ({bands['elevated']:.1f} bpm) and "
             f"average activity {average_activity:.2f} stayed below "
             f"{MODERATE_ACTIVITY_LEVEL:.2f}.")
+
+
+def format_report(result):
+    """Render the result dictionary as plain text.
+
+    Returns the report as a string rather than printing it, so tests can
+    inspect the output and main.py decides where it goes. Rounding
+    happens here and nowhere else - the stored values keep full
+    precision, and only the display is tidied.
+    """
+    width = 64
+    lines = []
+
+    # 1. Who and what.
+    lines.append("=" * width)
+    lines.append(f"  Session:     {result['session']}")
+    lines.append(f"  Participant: {result['participant']}")
+    lines.append("=" * width)
+    lines.append("")
+
+    # 2. What arrived and what survived.
+    counts = result["observations"]
+    lines.append("OBSERVATIONS")
+    lines.append(f"  Total received      {counts['total']:>4}")
+    lines.append(f"  Usable              {counts['usable']:>4}")
+    lines.append(f"    of which flagged  {counts['flagged']:>4}  (kept)")
+    lines.append(f"  Rejected            {counts['rejected']:>4}")
+    lines.append("")
+
+    # 3. The figures.
+    summary = result["summary"]
+    lines.append("SUMMARY  (usable observations only)")
+    if not summary:
+        lines.append("  No usable observations to summarise.")
+    else:
+        lines.append(f"  {'Measurement':<16}{'Average':>10}{'Minimum':>10}"
+                     f"{'Maximum':>10}   Unit")
+        for field in SUMMARY_FIELDS:
+            figures = summary[field]
+            unit = FIELD_UNITS[field]
+            places = FIELD_DECIMALS[field]
+            lines.append(
+                (f"  {FIELD_LABELS[field]:<16}"
+                 f"{figures['avg']:>10.{places}f}"
+                 f"{figures['min']:>10.{places}f}"
+                 f"{figures['max']:>10.{places}f}   {unit}").rstrip()
+            )
+    lines.append("")
+
+    # 4. Against this participant's own normals.
+    comparison = result["comparison"]
+    lines.append("COMPARISON WITH REFERENCE VALUES")
+    if not comparison:
+        lines.append("  Nothing to compare.")
+    else:
+        heart_rate = comparison["heart_rate"]
+        temperature = comparison["temperature"]
+        lines.append(f"  Heart rate    {heart_rate['average']:.1f} bpm  ->  "
+                     f"{heart_rate['zone']}")
+        lines.append(f"                bands: elevated "
+                     f"{heart_rate['elevated_band']:.1f} bpm, high "
+                     f"{heart_rate['high_band']:.1f} bpm")
+        lines.append(f"                {heart_rate['above_resting']:+.1f} bpm "
+                     f"relative to resting")
+        lines.append(f"  Temperature   {temperature['average']:.1f} C  ->  "
+                     f"{temperature['direction']}")
+        lines.append(f"                reference "
+                     f"{temperature['reference']:.1f} C, difference "
+                     f"{temperature['difference']:+.1f} C")
+    lines.append("")
+
+    # 5. Recovery, stated either way.
+    recovery = result["recovery"]
+    lines.append("RECOVERY")
+    if recovery["detected"]:
+        required = recovery["required"]
+        lines.append("  Detected.")
+        lines.append(f"    Heart rate  {recovery['peak_heart_rate']:.1f} -> "
+                     f"{recovery['final_heart_rate']:.1f} bpm  "
+                     f"({recovery['heart_rate_drop']:.0%} fall, "
+                     f"{required['heart_rate_drop']:.0%} required)")
+        lines.append(f"    Activity    {recovery['peak_activity']:.2f} -> "
+                     f"{recovery['final_activity']:.2f}       "
+                     f"({recovery['activity_drop']:.0%} fall, "
+                     f"{required['activity_drop']:.0%} required)")
+    else:
+        lines.append("  Not detected.")
+        # The reason can be a full sentence, so it wraps like the
+        # explanation rather than running off the edge of the terminal.
+        for line in textwrap.wrap(recovery["reason"], width=width - 4):
+            lines.append(f"    {line}")
+    lines.append("")
+
+    # 6. The verdict, and why.
+    lines.append(f"CLASSIFICATION:  {result['classification'].upper()}")
+    for line in textwrap.wrap(result["explanation"], width=width - 2):
+        lines.append(f"  {line}")
+    lines.append("")
+
+    # 7. The two groups, kept apart: kept-but-imperfect, and discarded.
+    lines.append(f"FLAGGED READINGS  ({counts['flagged']} kept)")
+    if result["flag_notes"]:
+        for note in result["flag_notes"]:
+            lines.append(f"  - {note}")
+    else:
+        lines.append("  None.")
+    lines.append("")
+
+    lines.append(f"REJECTED READINGS  ({counts['rejected']} discarded)")
+    if result["rejection_notes"]:
+        for note in result["rejection_notes"]:
+            lines.append(f"  - {note}")
+    else:
+        lines.append("  None.")
+
+    return "\n".join(lines)

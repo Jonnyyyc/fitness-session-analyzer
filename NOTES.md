@@ -574,3 +574,64 @@ The "why not" message rounds to whole percents, so a 10.8% drop prints as
 "heart rate fell 11%, short of the 15% required". Accurate to the rounding, and
 the unrounded value is available in the result dictionary, but worth knowing
 when reading the two side by side.
+
+---
+
+## Section 6 — Console report
+
+**What was built**
+
+`format_report(result)`, rendering the result dictionary as plain text in the
+seven sections specified. `Session` gained `flag_notes` and `rejection_notes`
+alongside `issues`.
+
+**Decisions and why**
+
+| Decision | Why |
+| --- | --- |
+| `format_report()` **returns** a string rather than printing | Tests can then assert on the output directly, and `main.py` decides where it goes. A function that prints can only be tested by capturing stdout, which is more machinery for less certainty. `main.py` calls `print(format_report(result))`. |
+| Rounding happens only inside `format_report()` | Stored values keep full precision, so no intermediate calculation inherits a rounding error. The displayed figure is tidied at the last possible moment, which is also why the same value can be shown to 1 decimal in the table and 2 in the explanation without either being "wrong". |
+| `Session` stores `flag_notes` and `rejection_notes` as well as `issues` | The report has to show the two groups separately. The alternative was for `format_report()` to search each issue string for the word "flagged", which couples the report's correctness to the exact wording of a message elsewhere in the file — silently breaking if that wording is ever reworded. Three lists holding the same strings is mild duplication; string-parsing your own output is a latent bug. |
+| `issues` keeps every note in arrival order, tagged `flagged -` / `rejected -` | The chronological list is what a reader wants when asking "what happened to my data, in order". The grouped lists are what the report wants. Both are cheap. |
+| Long sentences wrap with `textwrap` | The explanation and the recovery reason are full sentences of unpredictable length. Without wrapping they run off the edge of a terminal. `textwrap` is standard library. |
+| The recovery section always says something | Either the drops with their required thresholds, or the reason none was found. A blank section would read as "not checked" rather than "checked, and no". |
+| Empty summary and empty comparison print an explicit sentence | "No usable observations to summarise." is a finding. A blank space under a heading looks like a bug in the program. |
+| Report width fixed at 64 characters, verified to stay under 78 | Fits any terminal without wrapping, and keeps the output readable when pasted into the README as example output. Checked programmatically: no line exceeds 78 characters and none carries trailing whitespace. |
+
+**Alternatives rejected**
+
+- *Printing directly from `format_report()`* — see above; untestable without
+  capturing stdout.
+- *Rounding the values inside `summarise()`* — would make the report simpler,
+  but every later calculation would then be working from rounded inputs, and
+  the rounding would be invisible to anyone reading the result dictionary.
+- *A single combined "issues" list in the report* — the assignment asks for
+  usable versus rejected counts to be explained, and a flagged reading is a
+  fundamentally different event from a rejected one. Mixing them makes the
+  reader do the sorting.
+
+**Rounding — resolved: per-field decimal places**
+
+The section was specified as 1 decimal for the whole summary table. That is
+right for heart rate, skin response and temperature, but lossy for
+`activity_level` in a way that showed up in the output: a resting session with a
+true average of 0.05 printed as
+
+```
+  Activity level         0.1       0.1       0.1
+```
+
+while the explanation two sections below correctly said "average activity 0.05".
+The same figure appeared twice in one report with two different values, which
+invites a reader to distrust one of them. `activity_level` is a 0–1 scale, so
+one decimal leaves only ten possible values and anything under 0.05 collapses
+to zero.
+
+Resolved by `FIELD_DECIMALS`: 1 place for the three sensor readings, 2 for
+`activity_level`. The table now reads `0.05` and agrees with the explanation.
+
+The per-field table was chosen over a uniform 2 decimals because `73.00 bpm`
+claims more precision than a heart rate sensor provides — the trailing zero is
+not measurement, it is decoration. Decimal places are a property of what is
+being measured, so they belong in a table keyed by field, next to the units and
+labels that are already keyed the same way.
