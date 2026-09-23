@@ -362,3 +362,87 @@ check becomes: *the peak third's mean heart rate reached the elevated band*.
 No threshold is hard-coded outside those two methods. That rule is what makes
 the subclass work — if `detect_recovery()` held its own copy of 0.10, an
 `Athlete` would silently be judged by the untrained numbers.
+
+---
+
+## Section 3 — Validation
+
+**What was built**
+
+`validate_observation()` completed: structural checks, impossible-value ranges,
+and the two signal-quality tiers. Flags now travel from the validator through
+`Observation.from_dict()` into `Session`, which counts them separately from
+rejections.
+
+### Rejected vs flagged — the rule and the reason
+
+The split is **"could this have happened?"** versus **"do we trust the sensor
+that reported it?"** These are different questions and they get different
+answers.
+
+**Rejected — the reading describes something that cannot have occurred.**
+There is no partial credit here. A heart rate of −40 is not a poor measurement
+of a real heart rate; it is not a measurement at all. Averaging it in would
+corrupt every figure downstream, and no warning label makes that safe.
+
+| Rejected | Rule |
+| --- | --- |
+| Not a dictionary | The record is not a record |
+| Missing field | Any of the six keys absent |
+| Not a number | Value is text, `None`, or a boolean |
+| Heart rate | Outside 20–250 bpm |
+| Skin response | Outside 0–30 µS |
+| Temperature | Outside 20–45 °C |
+| Activity level | Outside 0.0–1.0 |
+| Signal quality | Outside 0.0–1.0 |
+| Timestamp | Below 0 |
+| Signal quality too low | Below 0.50 |
+
+**Flagged — the reading is possible, but the sensor was not confident.**
+
+| Flagged, still counted | Rule |
+| --- | --- |
+| Weak signal | Signal quality 0.50 – 0.69 |
+
+A reading the sensor half-trusts is still evidence. Discarding it can push a
+session below the five-observation minimum and produce "insufficient data" for a
+session that was in fact recorded — a worse outcome than including a slightly
+noisy reading and saying so. Below 0.50 the reading is closer to noise than
+signal, and including it would move the averages more than it informs them.
+
+The honest caveat: 0.50 and 0.70 are judgement calls. Any cutoff is. What
+matters for defending this is that they are named constants
+(`SIGNAL_QUALITY_REJECT`, `SIGNAL_QUALITY_FLAG`) with the reasoning written
+down, rather than numbers buried in an `if`.
+
+**Decisions and why**
+
+| Decision | Why |
+| --- | --- |
+| `validate_observation()` returns a dictionary (`ok` / `reason` / `flags`) instead of the planned `(ok, reason)` tuple | Section 3 introduced a third outcome — accepted *with a warning*. A tuple that grew to `(ok, reason, flags)` would force every caller to unpack a value it may not care about, and the meaning of position 3 would not be self-evident. The dictionary names its parts. This is a change from the Section 1 plan. |
+| Checks run in three ordered stages, stopping at the first failure | Structure, then plausibility, then trust — cheapest and most fundamental first. A record missing `heart_rate` reports exactly that, rather than a confusing complaint about a field it does happen to have. One record yields one reason, which keeps the report readable. |
+| Signal quality is checked twice, in two different senses | A quality of 1.3 is *impossible* (rejected as out of range); a quality of 0.31 is possible but *untrustworthy* (rejected as below the usable cutoff). Different problems, different messages. Collapsing them would produce "signal quality 1.3 is below the cutoff", which is nonsense. |
+| `timestamp` has a lower bound but no upper bound | A session can last any length of time, so any ceiling would be invented. A negative timestamp is still impossible, so the lower bound is real. `None` in `VALUE_RANGES` means "no bound". |
+| `skin_response` gained an upper bound of 30 µS, which the Section 1 plan did not have | The plan only rejected negatives. But skin conductance during exercise sits in roughly 1–20 µS, and a reading of, say, 800 is a sensor fault rather than an extreme person — exactly the kind of impossible value the section is meant to catch. Leaving it unbounded would have let one broken reading dominate the average. Flagged here as a deliberate deviation from the approved plan, not an oversight. |
+| Flags are recorded in `Session.issues` alongside rejections, tagged `flagged:` vs `rejected:` | The report has to show both, and they read naturally as one ordered list of what happened to the input. The prefix keeps them distinguishable; `flagged_count` and `rejected_count` keep them countable separately. |
+| Rejected records are still counted in `total_count` | `usable + rejected == total` must hold, otherwise the report cannot honestly say how many observations were received. Verified as an invariant in testing. |
+
+**Alternatives rejected**
+
+- *Flagging impossible values instead of rejecting them* — would keep more data,
+  but a value that cannot occur carries no information. Including it with a
+  warning shifts the averages while pretending to be cautious.
+- *A single signal-quality cutoff* — simpler to explain, but forces a choice
+  between discarding usable evidence and accepting noise. Two tiers cost one
+  extra constant and one extra branch.
+- *Collecting every problem with a record rather than stopping at the first* —
+  more thorough, but a record with a missing field cannot be range-checked
+  anyway, so most of the extra output would be noise about consequences of the
+  first failure.
+
+**Verified**
+
+All fifteen rejection paths produce a distinct readable message; the
+signal-quality boundary behaves exactly as specified (0.49 rejected, 0.50 and
+0.69 flagged, 0.70 clean); a mixed session reports `total=5 usable=2 flagged=1
+rejected=3` with both invariants holding.

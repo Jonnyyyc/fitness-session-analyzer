@@ -15,6 +15,34 @@ MEASUREMENT_FIELDS = (
     "signal_quality",
 )
 
+# Ranges a reading must fall inside to be believable at all. A value
+# outside these is not a poor reading, it is an impossible one - so the
+# record is rejected rather than flagged. None means "no upper bound":
+# a session can run for any length of time.
+VALUE_RANGES = {
+    "timestamp": (0, None),
+    "heart_rate": (20, 250),
+    "skin_response": (0, 30),
+    "temperature": (20, 45),
+    "activity_level": (0.0, 1.0),
+    "signal_quality": (0.0, 1.0),
+}
+
+# Units used only to make rejection messages readable.
+FIELD_UNITS = {
+    "timestamp": "s",
+    "heart_rate": "bpm",
+    "skin_response": "uS",
+    "temperature": "C",
+    "activity_level": "",
+    "signal_quality": "",
+}
+
+# Below this, a reading is closer to noise than signal - rejected.
+SIGNAL_QUALITY_REJECT = 0.50
+# Between the two, the reading is kept but carries a warning.
+SIGNAL_QUALITY_FLAG = 0.70
+
 
 def require_number(label, value):
     """Raise ValueError unless value is a real number.
@@ -28,30 +56,67 @@ def require_number(label, value):
     return value
 
 
+def describe_value(field, value):
+    """Render a value with its unit, for use in a rejection message."""
+    unit = FIELD_UNITS[field]
+    return f"{value} {unit}".strip()
+
+
+def rejected(reason):
+    """Build the 'this record cannot be used' result."""
+    return {"ok": False, "reason": reason, "flags": []}
+
+
 def validate_observation(raw):
-    """Check one raw sensor record.
+    """Check one raw sensor record against every rule.
 
-    Returns (True, None) when the record is acceptable, otherwise
-    (False, reason) where reason is readable plain English.
+    Returns a dictionary:
+        ok     - True if the record can be used at all
+        reason - why it was rejected, in plain English, or None
+        flags  - warnings about a record that is kept anyway
 
-    This function is the single place the observation rules live. Nothing
-    else in the program re-implements them. Section 3 extends it with the
-    impossible-value ranges and the signal-quality tiers; for now it
-    covers the structural checks only.
+    This function is the single place the observation rules live.
+    Nothing else in the program re-implements them.
+
+    The checks run cheapest-first and stop at the first failure, so a
+    record missing 'heart_rate' reports that rather than complaining
+    about a field it does have.
     """
     if not isinstance(raw, dict):
-        return False, f"record is a {type(raw).__name__}, not a dictionary"
+        return rejected(f"record is a {type(raw).__name__}, not a dictionary")
 
+    # 1. Structure: the six fields exist and are real numbers.
     for field in MEASUREMENT_FIELDS:
         if field not in raw:
-            return False, f"missing field '{field}'"
+            return rejected(f"missing field '{field}'")
 
         try:
             require_number(f"'{field}'", raw[field])
         except ValueError as error:
-            return False, str(error)
+            return rejected(str(error))
 
-    return True, None
+    # 2. Plausibility: the numbers describe something that could happen.
+    for field, (low, high) in VALUE_RANGES.items():
+        value = raw[field]
+        if value < low or (high is not None and value > high):
+            shown = describe_value(field, value)
+            if high is None:
+                return rejected(f"'{field}' is {shown}, below the minimum "
+                                f"{describe_value(field, low)}")
+            return rejected(f"'{field}' is {shown}, outside the valid range "
+                            f"{low} to {describe_value(field, high)}")
+
+    # 3. Trust: a believable reading may still be too noisy to rely on.
+    quality = raw["signal_quality"]
+    if quality < SIGNAL_QUALITY_REJECT:
+        return rejected(f"signal quality {quality:.2f} is below the "
+                        f"{SIGNAL_QUALITY_REJECT:.2f} usable cutoff")
+
+    flags = []
+    if quality < SIGNAL_QUALITY_FLAG:
+        flags.append(f"weak signal ({quality:.2f})")
+
+    return {"ok": True, "reason": None, "flags": flags}
 
 
 class Participant:
@@ -179,10 +244,13 @@ class Observation:
         Session catches that and records the reason, which keeps the
         rules in validate_observation() and the bookkeeping here.
         """
-        acceptable, reason = validate_observation(raw)
-        if not acceptable:
-            raise ValueError(reason)
-        return cls(**{field: raw[field] for field in MEASUREMENT_FIELDS})
+        result = validate_observation(raw)
+        if not result["ok"]:
+            raise ValueError(result["reason"])
+
+        observation = cls(**{field: raw[field] for field in MEASUREMENT_FIELDS})
+        observation.flags = result["flags"]
+        return observation
 
     def __repr__(self):
         return (f"Observation(t={self.timestamp}, hr={self.heart_rate}, "
@@ -213,8 +281,13 @@ class Session:
             observation = Observation.from_dict(raw)
         except ValueError as error:
             self.rejected_count += 1
-            self.issues.append(f"record {self._received}: {error}")
+            self.issues.append(f"record {self._received} rejected: {error}")
             return False
+
+        # A flagged record still counts. The warning is recorded so the
+        # report can say the reading was used despite being imperfect.
+        for flag in observation.flags:
+            self.issues.append(f"record {self._received} flagged: {flag}, kept")
 
         self.observations.append(observation)
         return True
@@ -237,6 +310,11 @@ class Session:
     @property
     def usable_count(self):
         return len(self.observations)
+
+    @property
+    def flagged_count(self):
+        """Usable observations that carry a warning. A subset of usable."""
+        return sum(1 for obs in self.observations if obs.flags)
 
     @property
     def total_count(self):
