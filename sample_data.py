@@ -1,157 +1,83 @@
 """Sample scenarios used to demonstrate the analyzer.
 
-Six scenarios: the five the assignment requires, plus "insufficient
-data" as a separate sixth so that "too little evidence to judge" is
-shown to be a different outcome from "poor quality data".
+Five scenarios come from the instructor-supplied generator in
+data_generator.py, called with a fixed seed so every run produces the
+same data and the reports can be compared against the README.
+
+Two extras are added by hand, each for a reason the generator cannot
+cover:
+
+  * a three-reading session, because the generator requires at least six
+    windows and so cannot produce a session that is too short to judge
+  * the recovery data judged as an Athlete, so the overridden recovery
+    threshold is visible in an ordinary run of main.py
 
 Each scenario is a dictionary with three keys:
 
     label        what to call the session in the report
     participant  the Participant (or Athlete) it belongs to
-    records      raw sensor records, in the format from the brief
-
-Records are written out as literal dictionaries rather than generated,
-so that what the analyzer is given is exactly what can be read here.
+    records      raw observation dictionaries
 
 Author: Jonathan Christensen
 """
 
-from analyzer import Participant, Athlete
+from analyzer import Athlete, Participant
+from data_generator import generate_fitness_data
 
-# One untrained participant for most scenarios, so differences in the
-# reports come from the data rather than from the person.
-JONATHAN = Participant("Jonathan", resting_heart_rate=70)
+# Fixed so the reports are reproducible. Changing it changes both the
+# participant profile and the measurements.
+SEED = 42
+WINDOWS = 12
 
-# The recovery scenario uses the Athlete, so a normal run of main.py
-# shows the overridden recovery_thresholds() being applied: this
-# session is judged against a 15% required drop, not 10%.
-MARA = Athlete("Mara", resting_heart_rate=45)
+# The generator's scenario names, paired with a readable session title.
+GENERATED_SCENARIOS = [
+    ("resting", "Resting session"),
+    ("moderate_activity", "Moderate activity session"),
+    ("high_activity", "High activity session"),
+    ("recovery", "Activity followed by recovery"),
+    ("poor_quality", "Poor-quality sensor data"),
+]
 
 
-RESTING = {
-    "label": "Sitting at a desk",
-    "participant": JONATHAN,
-    "records": [
-        {"timestamp": 0, "heart_rate": 72, "skin_response": 1.6,
-         "temperature": 32.9, "activity_level": 0.03, "signal_quality": 0.96},
-        {"timestamp": 1, "heart_rate": 74, "skin_response": 1.7,
-         "temperature": 32.9, "activity_level": 0.04, "signal_quality": 0.95},
-        {"timestamp": 2, "heart_rate": 73, "skin_response": 1.6,
-         "temperature": 33.0, "activity_level": 0.02, "signal_quality": 0.97},
-        {"timestamp": 3, "heart_rate": 75, "skin_response": 1.8,
-         "temperature": 32.9, "activity_level": 0.05, "signal_quality": 0.94},
-        {"timestamp": 4, "heart_rate": 72, "skin_response": 1.7,
-         "temperature": 33.0, "activity_level": 0.03, "signal_quality": 0.96},
-        {"timestamp": 5, "heart_rate": 74, "skin_response": 1.6,
-         "temperature": 32.9, "activity_level": 0.04, "signal_quality": 0.95},
-    ],
-}
+def build_generated_scenario(scenario, label, participant_class=Participant):
+    """Build one scenario dictionary from the generator.
 
-MODERATE = {
-    "label": "Brisk walk",
-    "participant": JONATHAN,
-    "records": [
-        {"timestamp": 0, "heart_rate": 98, "skin_response": 2.2,
-         "temperature": 33.0, "activity_level": 0.30, "signal_quality": 0.95},
-        {"timestamp": 1, "heart_rate": 100, "skin_response": 2.4,
-         "temperature": 33.1, "activity_level": 0.32, "signal_quality": 0.96},
-        {"timestamp": 2, "heart_rate": 102, "skin_response": 2.5,
-         "temperature": 33.1, "activity_level": 0.34, "signal_quality": 0.94},
-        {"timestamp": 3, "heart_rate": 104, "skin_response": 2.6,
-         "temperature": 33.2, "activity_level": 0.36, "signal_quality": 0.95},
-        {"timestamp": 4, "heart_rate": 106, "skin_response": 2.7,
-         "temperature": 33.2, "activity_level": 0.38, "signal_quality": 0.97},
-        {"timestamp": 5, "heart_rate": 108, "skin_response": 2.8,
-         "temperature": 33.3, "activity_level": 0.40, "signal_quality": 0.96},
-    ],
-}
+    The participant is built from the same profile the observations came
+    with, so each session is judged against the reference values of the
+    person it was recorded from rather than a shared default.
+    """
+    profile, observations = generate_fitness_data(
+        participant_id="P001",
+        scenario=scenario,
+        seed=SEED,
+        number_of_windows=WINDOWS,
+    )
+    return {
+        "label": label,
+        "participant": participant_class.from_profile(profile),
+        "records": observations,
+    }
 
-HIGH = {
-    "label": "Hill sprints",
-    "participant": JONATHAN,
-    "records": [
-        {"timestamp": 0, "heart_rate": 138, "skin_response": 4.2,
-         "temperature": 33.6, "activity_level": 0.72, "signal_quality": 0.95},
-        {"timestamp": 1, "heart_rate": 142, "skin_response": 4.6,
-         "temperature": 33.7, "activity_level": 0.76, "signal_quality": 0.96},
-        {"timestamp": 2, "heart_rate": 146, "skin_response": 5.0,
-         "temperature": 33.9, "activity_level": 0.79, "signal_quality": 0.94},
-        {"timestamp": 3, "heart_rate": 150, "skin_response": 5.4,
-         "temperature": 34.0, "activity_level": 0.82, "signal_quality": 0.95},
-        {"timestamp": 4, "heart_rate": 152, "skin_response": 5.6,
-         "temperature": 34.1, "activity_level": 0.84, "signal_quality": 0.96},
-        {"timestamp": 5, "heart_rate": 155, "skin_response": 5.8,
-         "temperature": 34.2, "activity_level": 0.85, "signal_quality": 0.95},
-    ],
-}
 
-# Warm-up, hard effort, then a cooldown. The peak is in the middle,
-# which is what detect_recovery() is built to find.
-RECOVERY = {
-    "label": "Interval session with cooldown",
-    "participant": MARA,
-    "records": [
-        {"timestamp": 0, "heart_rate": 90, "skin_response": 2.0,
-         "temperature": 32.9, "activity_level": 0.35, "signal_quality": 0.96},
-        {"timestamp": 1, "heart_rate": 105, "skin_response": 2.4,
-         "temperature": 33.0, "activity_level": 0.45, "signal_quality": 0.95},
-        {"timestamp": 2, "heart_rate": 120, "skin_response": 3.0,
-         "temperature": 33.2, "activity_level": 0.55, "signal_quality": 0.94},
-        {"timestamp": 3, "heart_rate": 165, "skin_response": 5.2,
-         "temperature": 33.8, "activity_level": 0.88, "signal_quality": 0.95},
-        {"timestamp": 4, "heart_rate": 170, "skin_response": 5.6,
-         "temperature": 34.0, "activity_level": 0.92, "signal_quality": 0.96},
-        {"timestamp": 5, "heart_rate": 168, "skin_response": 5.4,
-         "temperature": 34.0, "activity_level": 0.90, "signal_quality": 0.95},
-        {"timestamp": 6, "heart_rate": 120, "skin_response": 4.0,
-         "temperature": 33.6, "activity_level": 0.30, "signal_quality": 0.94},
-        {"timestamp": 7, "heart_rate": 105, "skin_response": 3.2,
-         "temperature": 33.3, "activity_level": 0.20, "signal_quality": 0.95},
-        {"timestamp": 8, "heart_rate": 95, "skin_response": 2.6,
-         "temperature": 33.1, "activity_level": 0.12, "signal_quality": 0.96},
-    ],
-}
+SCENARIOS = [build_generated_scenario(scenario, label)
+             for scenario, label in GENERATED_SCENARIOS]
 
-# Ten readings: three unusable, two doubtful but kept, five clean. The
-# point is that the session is still classified - a faulty sensor
-# degrades the evidence without destroying it.
-POOR_QUALITY = {
-    "label": "Cycle commute, sensor slipping",
-    "participant": JONATHAN,
-    "records": [
-        {"timestamp": 0, "heart_rate": 102, "skin_response": 2.4,
-         "temperature": 33.0, "activity_level": 0.32, "signal_quality": 0.95},
-        # Kept, but the sensor was not confident.
-        {"timestamp": 1, "heart_rate": 105, "skin_response": 2.5,
-         "temperature": 33.1, "activity_level": 0.34, "signal_quality": 0.58},
-        # Rejected: 'temperature' is missing entirely.
-        {"timestamp": 2, "heart_rate": 107, "skin_response": 2.5,
-         "activity_level": 0.35, "signal_quality": 0.93},
-        {"timestamp": 3, "heart_rate": 108, "skin_response": 2.6,
-         "temperature": 33.1, "activity_level": 0.36, "signal_quality": 0.95},
-        # Rejected: 320 bpm is not a heart rate a person can have.
-        {"timestamp": 4, "heart_rate": 320, "skin_response": 2.6,
-         "temperature": 33.2, "activity_level": 0.38, "signal_quality": 0.94},
-        # Kept, but doubtful.
-        {"timestamp": 5, "heart_rate": 110, "skin_response": 2.7,
-         "temperature": 33.2, "activity_level": 0.38, "signal_quality": 0.64},
-        # Rejected: the sensor barely had a signal at all.
-        {"timestamp": 6, "heart_rate": 112, "skin_response": 2.7,
-         "temperature": 33.2, "activity_level": 0.40, "signal_quality": 0.35},
-        {"timestamp": 7, "heart_rate": 113, "skin_response": 2.8,
-         "temperature": 33.3, "activity_level": 0.41, "signal_quality": 0.96},
-        {"timestamp": 8, "heart_rate": 115, "skin_response": 2.9,
-         "temperature": 33.3, "activity_level": 0.43, "signal_quality": 0.95},
-        {"timestamp": 9, "heart_rate": 116, "skin_response": 2.9,
-         "temperature": 33.4, "activity_level": 0.44, "signal_quality": 0.97},
-    ],
-}
+# The same recovery measurements, judged as a trained participant. The
+# readings are identical to the recovery session above, so any
+# difference in the report comes from the subclass and nothing else.
+SCENARIOS.append(build_generated_scenario(
+    "recovery",
+    "Activity followed by recovery, trained participant",
+    participant_class=Athlete,
+))
 
-# Every reading here is perfectly good. There are simply too few of
-# them, which is a different problem from poor quality above.
-INSUFFICIENT = {
+# Hand-written, because generate_fitness_data() refuses fewer than six
+# windows and this case needs fewer than five usable readings. Every
+# reading here is perfectly good; there are simply too few of them,
+# which is a different problem from poor quality.
+SCENARIOS.append({
     "label": "Watch taken off after a minute",
-    "participant": JONATHAN,
+    "participant": Participant("Jonathan", resting_heart_rate=70),
     "records": [
         {"timestamp": 0, "heart_rate": 118, "skin_response": 3.0,
          "temperature": 33.2, "activity_level": 0.52, "signal_quality": 0.96},
@@ -160,14 +86,4 @@ INSUFFICIENT = {
         {"timestamp": 2, "heart_rate": 122, "skin_response": 3.2,
          "temperature": 33.3, "activity_level": 0.56, "signal_quality": 0.97},
     ],
-}
-
-
-SCENARIOS = [
-    RESTING,
-    MODERATE,
-    HIGH,
-    RECOVERY,
-    POOR_QUALITY,
-    INSUFFICIENT,
-]
+})
