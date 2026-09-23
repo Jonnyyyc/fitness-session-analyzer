@@ -635,3 +635,48 @@ claims more precision than a heart rate sensor provides — the trailing zero is
 not measurement, it is decoration. Decimal places are a property of what is
 being measured, so they belong in a table keyed by field, next to the units and
 labels that are already keyed the same way.
+
+---
+
+## Section 7 — Sample data
+
+**What was built**
+
+`sample_data.py` with six scenarios, and `main.py` reduced to a loop over them.
+
+| Scenario | Label produced | Readings |
+| --- | --- | --- |
+| Sitting at a desk | `resting` | 6 |
+| Brisk walk | `moderate activity` | 6 |
+| Hill sprints | `high activity` | 6 |
+| Interval session with cooldown | `recovering` | 9 (Athlete) |
+| Cycle commute, sensor slipping | `moderate activity` | 10 → 7 usable, 2 flagged, 3 rejected |
+| Watch taken off after a minute | `insufficient data` | 3 |
+
+**Decisions and why**
+
+| Decision | Why |
+| --- | --- |
+| Records are written as literal dictionaries, not generated in a loop | This is the data file. What the analyzer receives should be readable exactly as written, in the format the brief specifies. A loop like `[record(t, 70 + t) for t in range(6)]` is shorter but hides the values behind arithmetic, and the one file a marker is most likely to open to check "does this match the required format?" should answer that question directly. |
+| Poor quality and insufficient data are separate scenarios | They are different failures. The poor-quality session has a faulty sensor but still supports a verdict; the insufficient one has perfect readings and simply too few. Merging them would lose that distinction, and the poor-quality scenario would collapse into "insufficient data" and demonstrate nothing about flagging. |
+| The poor-quality scenario carries one of each rejection kind | Missing field, impossible value (320 bpm), and signal below the cutoff. The three rejection *categories* each appear once in normal output, so running `main.py` exercises them without a test harness. |
+| The recovery scenario uses the `Athlete` | A normal run of `main.py` then shows the override applied: the report reads "15% required" rather than 10%, and the bands are 74.0 / 117.5 rather than Jonathan's 94.0 / 130.0. The inheritance is visible in the program's ordinary output rather than only in a test. |
+| Everything else uses one `Participant` | Differences between the reports then come from the data, not from the person. Only the recovery scenario varies the participant, and it varies it for a reason. |
+| Scenario labels are situations, not categories | "Hill sprints" rather than "high activity scenario". The label naming the expected answer would make the report look like it was told what to conclude. |
+| `main.py` holds a six-line loop and nothing else | The assignment requires `python3 main.py` to work; it does not require `main.py` to contain reasoning. Any logic added here would be logic `tests.py` cannot reach. |
+
+**Alternatives rejected**
+
+- *Generating records programmatically to keep the file short* — see above.
+- *Making the recovery scenario 6 readings like the others* — thirds of 6 give
+  2 readings each, so each phase of warm-up / effort / cooldown would rest on
+  two numbers. Nine gives three per phase and makes the peak unambiguous.
+- *Putting the expected label in each scenario dictionary* — would let `main.py`
+  check itself, but that is what `tests.py` is for, and a data file asserting
+  its own answer is circular.
+
+**Verified**
+
+`python main.py` runs clean and produces all six expected labels. The
+poor-quality scenario reports `total=10 usable=7 flagged=2 rejected=3` and still
+receives a real classification, which was the point of sizing it that way.
