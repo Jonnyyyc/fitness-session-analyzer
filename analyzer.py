@@ -5,6 +5,8 @@ Standard library only.
 Author: Jonathan Christensen
 """
 
+import statistics
+
 # Every sensor record must carry these six fields, in this spelling.
 MEASUREMENT_FIELDS = (
     "timestamp",
@@ -42,6 +44,22 @@ FIELD_UNITS = {
 SIGNAL_QUALITY_REJECT = 0.50
 # Between the two, the reading is kept but carries a warning.
 SIGNAL_QUALITY_FLAG = 0.70
+
+# The measurements worth summarising. 'timestamp' orders the session
+# rather than measuring the person, and 'signal_quality' describes the
+# sensor rather than the body - an average of either would mean nothing.
+SUMMARY_FIELDS = (
+    "heart_rate",
+    "skin_response",
+    "temperature",
+    "activity_level",
+)
+
+# How far skin temperature must differ from the participant's own normal
+# before the report calls it a difference rather than ordinary drift.
+# A presentation tolerance, not a classification threshold: no
+# classification decision reads this value.
+TEMPERATURE_TOLERANCE = 0.5
 
 
 def require_number(label, value):
@@ -323,3 +341,88 @@ class Session:
     def __repr__(self):
         return (f"Session({self.label!r}, {self.usable_count} usable "
                 f"of {self.total_count})")
+
+
+def summarise(observations):
+    """Average, minimum and maximum for each measured field.
+
+    Pass the session's usable observations. Rejected records never
+    become Observation objects, so they cannot reach this function -
+    the averages are of trustworthy readings by construction.
+
+    Returns a dictionary keyed by field name:
+
+        {"heart_rate": {"avg": 118.0, "min": 110, "max": 126}, ...}
+
+    Returns an empty dictionary for an empty list. There is no sensible
+    average of nothing, and raising here would force every caller to
+    guard a case the classifier already handles as "insufficient data".
+    """
+    if not observations:
+        return {}
+
+    summary = {}
+    for field in SUMMARY_FIELDS:
+        values = [getattr(observation, field) for observation in observations]
+        summary[field] = {
+            "avg": statistics.mean(values),
+            "min": min(values),
+            "max": max(values),
+        }
+    return summary
+
+
+def heart_rate_zone(average_heart_rate, bands):
+    """Which of the participant's bands an average heart rate falls into.
+
+    The bands are passed in rather than recalculated, so this function
+    holds no thresholds of its own. Both the comparison and the
+    classification call it, which is what keeps the two consistent.
+    """
+    if average_heart_rate >= bands["high"]:
+        return "high"
+    if average_heart_rate >= bands["elevated"]:
+        return "elevated"
+    return "below elevated"
+
+
+def compare_to_reference(summary, participant):
+    """Measure the session against the participant's own reference values.
+
+    Every threshold comes from the participant - heart rate from
+    heart_rate_bands(), temperature from normal_temperature - so two
+    people with identical readings can be described differently, which
+    is the point of holding reference values per person.
+
+    Returns an empty dictionary when there is nothing to compare.
+    """
+    if not summary:
+        return {}
+
+    bands = participant.heart_rate_bands()
+    average_heart_rate = summary["heart_rate"]["avg"]
+
+    average_temperature = summary["temperature"]["avg"]
+    temperature_difference = average_temperature - participant.normal_temperature
+    if abs(temperature_difference) < TEMPERATURE_TOLERANCE:
+        direction = "normal"
+    elif temperature_difference > 0:
+        direction = "above normal"
+    else:
+        direction = "below normal"
+
+    return {
+        "heart_rate": {
+            "average": average_heart_rate,
+            "zone": heart_rate_zone(average_heart_rate, bands),
+            "elevated_band": bands["elevated"],
+            "high_band": bands["high"],
+            "above_resting": average_heart_rate - participant.resting_heart_rate,
+        },
+        "temperature": {
+            "average": average_temperature,
+            "reference": participant.normal_temperature,
+            "difference": temperature_difference,
+            "direction": direction,
+        },
+    }

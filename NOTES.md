@@ -446,3 +446,63 @@ All fifteen rejection paths produce a distinct readable message; the
 signal-quality boundary behaves exactly as specified (0.49 rejected, 0.50 and
 0.69 flagged, 0.70 clean); a mixed session reports `total=5 usable=2 flagged=1
 rejected=3` with both invariants holding.
+
+---
+
+## Section 4 — Calculations
+
+**What was built**
+
+Three standalone functions: `summarise()`, `heart_rate_zone()` and
+`compare_to_reference()`. No classification yet — these produce the figures that
+Section 5 decides on.
+
+**Decisions and why**
+
+| Decision | Why |
+| --- | --- |
+| `summarise()` covers four fields, not all six | `timestamp` orders the session rather than measuring the person, and `signal_quality` describes the *sensor*, not the body. An average of either would be a number with no meaning — "mean signal quality 0.8" invites a reader to treat sensor confidence as a physiological finding. |
+| Only usable observations are summarised, and this is guaranteed by construction rather than by a filter | A rejected record never becomes an `Observation` at all — `from_dict()` raises before the object exists. So `summarise()` cannot average a bad reading even if called carelessly. This is stronger than filtering inside the function, where a future caller could pass the wrong list. |
+| Empty input returns `{}` rather than raising | `statistics.mean([])` raises `StatisticsError`. Letting that propagate would force every caller to guard a case the classifier already handles properly as "insufficient data". Returning an empty dictionary lets the empty case travel through the same path as any other and be labelled at the one place that decides labels. |
+| `heart_rate_zone()` exists as its own function, taking `bands` as an argument | Both `compare_to_reference()` and the Section 5 classifier need to place an average heart rate against the participant's bands. Written once, the report and the verdict can never disagree; written twice, they could drift apart silently. Taking `bands` as a parameter means the function holds no thresholds — it only compares. |
+| `compare_to_reference()` reads every threshold from the participant | `heart_rate_bands()` for the bands, `normal_temperature` for temperature. Nothing is recalculated locally. This is what makes `Athlete` work and what lets two people with identical readings be described differently — which is the entire point of storing reference values per person. |
+| `above_resting` is included alongside the zone | The zone answers "how hard was this?"; the raw bpm above resting answers "by how much?". The report reads better with both, and it costs one subtraction. |
+
+**The temperature tolerance — a deviation worth naming**
+
+`TEMPERATURE_TOLERANCE = 0.5` is a module constant, not a participant value.
+The instruction for this section was that thresholds come from the participant
+and nothing is hard-coded, so this needs justifying rather than hiding.
+
+The participant supplies the *reference point* (`normal_temperature`); the
+tolerance is the width of the band around it that still counts as "normal".
+Without one, a difference of 0.01 °C would be reported as "above normal", which
+is noise dressed up as a finding.
+
+It is deliberately kept out of classification: no label depends on it. It only
+decides whether the report prints "normal", "above normal" or "below normal",
+and the signed difference is reported alongside regardless, so a reader can
+always see the underlying number. If a per-person tolerance is wanted later it
+moves onto `Participant` without changing any caller.
+
+**Alternatives rejected**
+
+- *Returning flat keys like `heart_rate_avg`, `heart_rate_min`* — simpler to
+  print, but the nested `{"avg", "min", "max"}` shape lets the report loop over
+  fields uniformly instead of naming twelve keys by hand.
+- *Having `summarise()` take the `Session` rather than a list* — would couple a
+  calculation to a class for no gain, and makes it awkward to test on a handful
+  of observations without building a session around them.
+- *Reporting temperature as a bare signed difference with no wording* — honest,
+  but pushes the interpretation onto the reader of a report whose whole purpose
+  is to interpret.
+
+**Verified**
+
+`summarise()` matches hand-calculated means; rejected records are absent from
+the averages (a 4-record session with 2 rejections averages only the 2 usable
+readings); empty input returns `{}` from both functions; zone boundaries land
+exactly on the band edges (93.9 below elevated, 94.0 elevated, 129.9 elevated,
+130.0 high); and the same summary yields "elevated" for an untrained
+participant but "high" for an athlete, confirming thresholds are read per
+person.
