@@ -96,12 +96,9 @@ HIGH_ACTIVITY_LEVEL = 0.60
 
 
 def require_number(label, value):
-    """Raise ValueError unless value is a real number.
-
-    Booleans are refused: in Python bool subclasses int, so True would
-    otherwise be accepted as the number 1, and a heart rate of True
-    should be an error rather than 1 bpm.
-    """
+    """Raise ValueError unless value is a real number."""
+    # bool subclasses int in Python, so True would otherwise be accepted
+    # as the number 1.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{label} must be a number, got {type(value).__name__}")
     return value
@@ -119,19 +116,9 @@ def rejected(reason):
 
 
 def validate_observation(raw):
-    """Check one raw sensor record against every rule.
+    """Check one record. The only place the observation rules live.
 
-    Returns a dictionary:
-        ok     - True if the record can be used at all
-        reason - why it was rejected, in plain English, or None
-        flags  - warnings about a record that is kept anyway
-
-    This function is the single place the observation rules live.
-    Nothing else in the program re-implements them.
-
-    The checks run cheapest-first and stop at the first failure, so a
-    record missing 'heart_rate' reports that rather than complaining
-    about a field it does have.
+    Returns {"ok": bool, "reason": str or None, "flags": list of str}.
     """
     if not isinstance(raw, dict):
         return rejected(f"record is a {type(raw).__name__}, not a dictionary")
@@ -171,11 +158,9 @@ def validate_observation(raw):
 
 
 class Participant:
-    """A person and the reference measurements taken when they are at rest.
+    """A person and their reference measurements.
 
-    The resting heart rate anchors every comparison the program makes,
-    so it is kept private and reached through a property that refuses
-    impossible values.
+    The resting and maximum heart rates are private, behind properties.
     """
 
     def __init__(self, name, resting_heart_rate, max_heart_rate=190,
@@ -201,11 +186,7 @@ class Participant:
     def from_profile(cls, profile):
         """Build a participant from the data generator's profile dictionary.
 
-        A second alternative constructor, alongside the plain one. The
-        generator names its fields differently from this program, so the
-        translation lives here rather than being repeated at every call
-        site. Because it builds with cls(), Athlete.from_profile()
-        returns an Athlete.
+        Builds with cls(), so Athlete.from_profile() returns an Athlete.
         """
         missing = [f for f in cls.PROFILE_FIELDS if f not in profile]
         if missing:
@@ -253,11 +234,7 @@ class Participant:
     def heart_rate_bands(self):
         """Absolute bpm at which this person counts as elevated or high.
 
-        Based on heart rate reserve: the span between resting and maximum
-        is what the person actually has available to use, so a percentage
-        of that span means the same amount of effort for everyone. This
-        is why a trained person needs no special case - their lower
-        resting rate widens their reserve, and the formula uses it.
+        Uses heart rate reserve: the span between resting and maximum.
         """
         reserve = self.max_heart_rate - self.resting_heart_rate
         return {
@@ -270,6 +247,8 @@ class Participant:
 
         Fractions of the session's peak third, not absolute values.
         """
+        # Read by detect_recovery() rather than hard-coded there, so a
+        # subclass can change the rule by overriding this method.
         return {"heart_rate_drop": 0.10, "activity_drop": 0.30}
 
     def describe(self):
@@ -278,14 +257,9 @@ class Participant:
 
 
 class Athlete(Participant):
-    """A trained participant. Recovers faster, so recovery is judged harder.
+    """A trained participant, whose heart rate falls faster after effort.
 
-    The heart rate bands need no override - heart rate reserve already
-    accounts for a low resting rate. What does differ is the way a
-    trained person's heart rate behaves *after* effort: it falls quickly
-    and steeply. A 10% dip that would signal a genuine cooldown in an
-    untrained person is unremarkable in an athlete, so the bar is raised
-    to 15% to avoid reading ordinary fluctuation as a recovery phase.
+    Only recovery differs. The reserve formula handles the bands.
     """
 
     def recovery_thresholds(self):
@@ -315,12 +289,7 @@ class Observation:
     def from_dict(cls, raw):
         """Build an Observation from a raw record dictionary.
 
-        An alternative constructor. The program's real input format is
-        the dict shown in the brief, so this is the natural way in.
-
         Raises ValueError(reason) when the record fails validation.
-        Session catches that and records the reason, which keeps the
-        rules in validate_observation() and the bookkeeping here.
         """
         result = validate_observation(raw)
         if not result["ok"]:
@@ -338,10 +307,7 @@ class Observation:
 class Session:
     """One recording: a participant, plus the observations taken from them.
 
-    Composition. A Session *has a* Participant and *has a list of*
-    Observations; it is not a kind of either. The participant outlives
-    any single session, and the observations mean nothing without the
-    participant's reference values to compare them against.
+    Composition: a Session has a Participant and a list of Observations.
     """
 
     def __init__(self, participant, label="session"):
@@ -381,12 +347,7 @@ class Session:
         return self
 
     def ordered_observations(self):
-        """Accepted observations in time order.
-
-        Recovery detection compares the end of a session against its
-        middle, so the readings have to be in order regardless of the
-        order they arrived in.
-        """
+        """Accepted observations in time order."""
         return sorted(self.observations, key=lambda obs: obs.timestamp)
 
     @property
@@ -405,11 +366,7 @@ class Session:
     def analyse(self):
         """Run the whole analysis and return the structured result.
 
-        This is the one place the pieces are assembled: summarise the
-        usable readings, compare them to the participant's own reference
-        values, look for recovery, then classify. Everything the report
-        needs is in the returned dictionary, so format_report() does no
-        calculation of its own.
+        format_report() does no calculation of its own on top of this.
         """
         observations = self.ordered_observations()
         summary = summarise(observations)
@@ -447,17 +404,7 @@ class Session:
 def summarise(observations):
     """Average, minimum and maximum for each measured field.
 
-    Pass the session's usable observations. Rejected records never
-    become Observation objects, so they cannot reach this function -
-    the averages are of trustworthy readings by construction.
-
-    Returns a dictionary keyed by field name:
-
-        {"heart_rate": {"avg": 118.0, "min": 110, "max": 126}, ...}
-
-    Returns an empty dictionary for an empty list. There is no sensible
-    average of nothing, and raising here would force every caller to
-    guard a case the classifier already handles as "insufficient data".
+    Returns {field: {"avg", "min", "max"}}, or {} for an empty list.
     """
     if not observations:
         return {}
@@ -476,9 +423,7 @@ def summarise(observations):
 def heart_rate_zone(average_heart_rate, bands):
     """Which of the participant's bands an average heart rate falls into.
 
-    The bands are passed in rather than recalculated, so this function
-    holds no thresholds of its own. Both the comparison and the
-    classification call it, which is what keeps the two consistent.
+    The bands are passed in, so this function holds no thresholds.
     """
     if average_heart_rate >= bands["high"]:
         return "high"
@@ -490,12 +435,7 @@ def heart_rate_zone(average_heart_rate, bands):
 def compare_to_reference(summary, participant):
     """Measure the session against the participant's own reference values.
 
-    Every threshold comes from the participant - heart rate from
-    heart_rate_bands(), temperature from normal_temperature - so two
-    people with identical readings can be described differently, which
-    is the point of holding reference values per person.
-
-    Returns an empty dictionary when there is nothing to compare.
+    Every threshold is read from the participant. Returns {} if empty.
     """
     if not summary:
         return {}
@@ -543,13 +483,9 @@ def compare_to_reference(summary, participant):
 
 
 def split_into_thirds(observations):
-    """Split time-ordered observations into three consecutive parts.
-
-    Uneven counts put the remainder in the later parts, so the final
-    third is never the smallest - it is the part recovery is judged on,
-    and a one-reading final third would make the verdict rest on a
-    single number.
-    """
+    """Split time-ordered observations into three consecutive parts."""
+    # Uneven counts put the remainder in the later parts, so the final
+    # third is never the smallest. Recovery is judged on it.
     count = len(observations)
     first_boundary = count // 3
     second_boundary = 2 * count // 3
@@ -563,19 +499,10 @@ def split_into_thirds(observations):
 def detect_recovery(observations, participant):
     """Did heart rate AND activity both fall towards the end of the session?
 
-    Compares the final third against the session's *peak* third - the
-    one with the highest average heart rate - rather than against the
-    first third. A session that starts calm, works hard, then eases off
-    has its peak in the middle, and measuring from the first third would
-    report a rise rather than a recovery.
-
-    How far each must fall comes from participant.recovery_thresholds(),
-    so an Athlete is judged by its own numbers. Nothing here hard-codes
-    a threshold.
-
-    Returns a dictionary; 'detected' is the verdict and the rest is the
-    evidence behind it.
+    Returns a dict; 'detected' is the verdict, the rest is the evidence.
     """
+    # Thresholds are read from the participant, not hard-coded here, so
+    # an Athlete is judged by its own numbers.
     thresholds = participant.recovery_thresholds()
     bands = participant.heart_rate_bands()
 
@@ -591,6 +518,8 @@ def detect_recovery(observations, participant):
         return {**not_detected,
                 "reason": "too few observations to compare start and end"}
 
+    # Measured against the peak third rather than the first, because a
+    # session that works hard then eases off has its peak in the middle.
     thirds = split_into_thirds(observations)
     heart_rates = [statistics.mean([obs.heart_rate for obs in part])
                    for part in thirds]
@@ -653,15 +582,10 @@ def detect_recovery(observations, participant):
 def classify_session(summary, participant, usable_count, recovery):
     """Label the session and explain the label.
 
-    Returns (label, explanation). The explanation names the figures that
-    decided the verdict, so a reader can check the reasoning rather than
-    trust it.
-
-    Order matters: insufficient data, then recovering, then high, then
-    moderate, then resting. Recovery is checked before high activity
-    because a hard session ending in a cooldown satisfies both, and
-    "recovering" is the more specific of the two statements.
+    Order: insufficient data, recovering, high, moderate, resting.
     """
+    # Recovery is checked before high activity because a hard session
+    # ending in a cooldown satisfies both, and recovering says more.
     if usable_count < MINIMUM_USABLE_OBSERVATIONS:
         return ("insufficient data",
                 f"Only {usable_count} usable observation"
@@ -733,10 +657,7 @@ def classify_session(summary, participant, usable_count, recovery):
 def format_report(result):
     """Render the result dictionary as plain text.
 
-    Returns the report as a string rather than printing it, so tests can
-    inspect the output and main.py decides where it goes. Rounding
-    happens here and nowhere else - the stored values keep full
-    precision, and only the display is tidied.
+    Returns a string rather than printing. Rounding happens only here.
     """
     width = 64
     lines = []
