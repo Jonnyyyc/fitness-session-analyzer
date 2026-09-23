@@ -80,6 +80,26 @@ as a trained participant.
 
 ---
 
+## Project structure
+
+| File | What it does | Source |
+| --- | --- | --- |
+| `README.md` | This document. | Required by the brief |
+| `main.py` | Entry point. Loops over the sample scenarios and prints a report for each. Holds no logic beyond that loop. | Required by the brief |
+| `sample_data.py` | The seven demonstration scenarios, five built from the generator and two by hand. | Required by the brief |
+| `tests.py` | 35 unit tests across eight `TestCase` classes. | Required by the brief |
+| `requirements.txt` | Records that the project needs nothing outside the standard library. | Required by the brief |
+| `data_generator.py` | Produces simulated participant profiles and observations. Copied in unchanged and never edited. | Instructor-supplied |
+| `analyzer.py` | All four classes and every standalone function. The whole program lives here. | Added by me |
+| `NOTES.md` | Working decision log, written as the project went along. The README is built from it. | Added by me |
+| `.gitignore` | Keeps `__pycache__` and editor files out of the repository. | Added by me |
+
+`analyzer.py` is not on the brief's file list. I put the classes in their own
+module so that `main.py` could stay a thin entry point and `tests.py` could
+import the classes without pulling in the code that prints reports.
+
+---
+
 ## Class design
 
 All four classes live in `analyzer.py`. `data_generator.py` is the instructor's
@@ -485,3 +505,9 @@ caught.
   identically, even though the second is a good deal more trustworthy.
 - No live input. Observations come either from `generate_fitness_data()` or from
   literal dictionaries. There is no file reading and no device interface.
+
+---
+
+## License
+
+Coursework submitted for ACIT4420 at OsloMet. Not licensed for reuse.
