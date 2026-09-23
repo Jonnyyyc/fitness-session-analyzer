@@ -112,10 +112,9 @@ file and defines no classes.
 | `Observation` | One observation window: the six-field sensor record from the brief, plus any quality warnings attached to it. |
 | `Session` | One recording: a participant and the list of observations taken from them. Accepts or rejects incoming records, counts both, and produces the result dictionary. |
 
-Four classes, and I stopped there deliberately. I considered a separate
-`Validator` class and a separate `Report` class, but each would have held no
-data and exposed a single method. That is a function with extra ceremony around
-it.
+I considered a separate `Validator` class and a separate `Report` class, but
+each would have held no data and exposed a single method, so both are plain
+functions instead.
 
 ---
 
@@ -128,12 +127,11 @@ it.
 | Inheritance and overriding | `analyzer.py` | `Athlete.recovery_thresholds()` overrides `Participant.recovery_thresholds()`, raising the required heart-rate drop from 10% to 15%. `Athlete.describe()` also overrides the parent. |
 | `@classmethod` | `analyzer.py` | Two of them. `Observation.from_dict(raw)` builds one observation from a raw record and raises `ValueError` if the record fails validation. `Participant.from_profile(profile)` builds a participant from the generator's profile dictionary, translating its field names into this program's. Because it builds with `cls()`, `Athlete.from_profile()` returns an `Athlete`. |
 
-The inheritance does real work rather than sitting there to tick a box. Give
-both classes the same readings, a peak third of 130 bpm falling to 116, which is
-a 10.8% drop, and a `Participant` comes back as **recovering** while an
-`Athlete` comes back as **moderate activity**. Only the first clears its 10%
-requirement. `test_between_the_bars_separates_participant_from_athlete` covers
-this, and I confirmed the test fails if the override is removed.
+The override changes the result. Given the same readings, a peak third of
+130 bpm falling to 116 bpm, which is a 10.8% drop, a `Participant` is classified
+**recovering** and an `Athlete` is classified **moderate activity**, because only
+the first clears its 10% requirement. This is covered by
+`test_between_the_bars_separates_participant_from_athlete`.
 
 ---
 
@@ -151,8 +149,7 @@ All in `analyzer.py`.
 | `format_report(result)` | presentation | Renders the result dictionary as plain text. Returns a string, and `main.py` prints it. |
 
 `require_number()`, `describe_value()`, `rejected()` and `split_into_thirds()`
-are small internal helpers. I have not counted them above, since padding the
-number with plumbing would be dishonest.
+are small internal helpers and are not counted above.
 
 ---
 
@@ -163,8 +160,8 @@ we trust the sensor that reported it?
 
 ### Rejected, meaning discarded and not counted as usable
 
-A value that cannot occur carries no information. Averaging it in would corrupt
-every figure downstream, and no warning label makes that safe.
+A value that cannot occur carries no information, and averaging it in would
+affect every figure calculated from the session.
 
 | Problem | Rule |
 | --- | --- |
@@ -185,14 +182,12 @@ every figure downstream, and no warning label makes that safe.
 | --- | --- |
 | Weak signal | Signal quality 0.50 to 0.69 |
 
-A reading the sensor half-trusts is still evidence. Throwing it away can push a
-session below the five-observation minimum and produce "insufficient data" for a
-session that really happened, which is a worse outcome than including a slightly
-noisy reading and saying so in the report.
+A doubtful reading is still evidence. Discarding it can push a session below the
+five-observation minimum and report "insufficient data" for a session that was
+recorded, so these readings are counted and the warning is shown in the report.
 
-Booleans get rejected explicitly anywhere a number is expected. This is a Python
-quirk: `bool` subclasses `int`, so `True` would otherwise be accepted as the
-number 1, and a heart rate of `True` should be an error rather than 1 bpm.
+Booleans are rejected explicitly anywhere a number is expected. In Python `bool`
+subclasses `int`, so `True` would otherwise be accepted as the number 1.
 
 ---
 
@@ -259,85 +254,57 @@ one-reading final third deciding the whole classification.
 
 ### Why heart rate reserve, and not a ratio
 
-My first version measured effort as mean heart rate divided by resting heart
-rate. That turned out to be wrong, and not in a way I could patch.
-
-A ratio quietly assumes everyone has the same ceiling. They do not. What a
-person actually has available is the gap between their resting rate and their
-maximum, and two people with the same resting rate but different maximums have
-different amounts of room to work with. A ratio cannot see that at all.
-
-The giveaway was the athlete case. Under the ratio model, a low resting heart
-rate made the effort score go up, so a fitter person looked like they were
-working harder. I had added an `Athlete` subclass to compensate. Once I noticed
-the subclass existed purely to cancel out a distortion the formula itself
-introduced, it was clear the formula was the problem.
-
-Heart rate reserve fixes it properly, and a trained participant then needs no
-special case for the bands.
+The first version measured effort as mean heart rate divided by resting heart
+rate. A ratio assumes everyone has the same maximum, which is not the case. Two
+people with the same resting rate but different maximums have different amounts
+of range available. It also meant a low resting heart rate raised the effort
+score, so a fitter participant appeared to be working harder. Heart rate reserve
+uses the span between resting and maximum, so no special case is needed for a
+trained participant.
 
 ### Why recovery is checked before high activity
 
-A hard session that ends in a cooldown passes both tests, so the order of the
-checks decides the label. I report **recovering**.
-
-The reasoning is that "recovering" says more. Plenty of sessions are demanding,
-so "high activity" on its own is a weak statement. "Recovering" says the session
-was demanding and the participant has come back down from it. The explanation
-text names the peak intensity too, so the hard stretch still appears in the
-report rather than getting buried.
-
-There is a real cost. A session labelled "recovering" will not turn up if you go
-looking for "high activity", even though it contained plenty of it. For this
-assignment that seemed acceptable, because each session is reported on its own
-rather than aggregated across many.
+A hard session that ends in a cooldown satisfies both tests, so the order of the
+checks decides the label. This program reports recovering, because it is the
+more specific description: the session was demanding and the participant has
+come back down from it. The explanation text also names the peak intensity, so
+the hard stretch still appears in the report. The trade-off is that a session
+labelled recovering will not be found by searching for high activity.
 
 ### Why the athlete overrides recovery and not the bands
 
-Once the reserve formula was in place, overriding `heart_rate_bands()` would
-have achieved nothing. The formula already accounts for a low resting heart
-rate. An override that duplicates what the parent already does is worse than no
-override at all, because it hides where the work is actually happening.
-
-What genuinely differs in a trained person is what happens after the effort
-stops. Their heart rate drops faster and further. A 10% dip that means a real
-cooldown in an untrained person is just normal variation in an athlete, so I
-raised the requirement to 15%.
-
-The 30% activity requirement is inherited unchanged through `super()`. How
-quickly someone stops moving has nothing to do with fitness.
+The reserve formula already accounts for a low resting heart rate, so overriding
+`heart_rate_bands()` would repeat what the parent class does. What differs in a
+trained participant is the recovery after effort, where the heart rate falls
+faster. A 10% drop that indicates a cooldown in an untrained participant is
+within normal variation for an athlete, so the requirement is 15%. The 30%
+activity requirement is inherited unchanged through `super()`.
 
 ### Why recovery is measured from the peak third
 
-A session that starts calm, works hard, then eases off has its peak in the
-middle. Comparing the end against the beginning would put a warm-up next to a
-cooldown, show a small rise, and miss the recovery completely. So the code finds
-whichever third had the highest average heart rate and measures the fall from
-there.
+A session that starts calm, works hard and then eases off has its peak in the
+middle. Comparing the end against the beginning would compare a warm-up with a
+cooldown and show a small rise instead of a decline. The code takes whichever
+third has the highest average heart rate and measures the fall from there.
 
 ### Thresholds live in exactly two methods
 
 Nothing outside `heart_rate_bands()` and `recovery_thresholds()` hard-codes a
-threshold. `classify_session()` and `detect_recovery()` ask the participant for
-its numbers instead of keeping copies.
-
-This is the rule that makes the subclass work at all. If `detect_recovery()` had
-its own copy of 0.10 sitting in it, an `Athlete` would be silently judged by the
-untrained numbers and nothing would look wrong.
+threshold. `classify_session()` and `detect_recovery()` read their numbers from
+the participant instead of keeping copies. This is what allows `Athlete` to
+change the behaviour by overriding a single method.
 
 ### Rounding happens at display time only
 
-Stored values keep full precision so no calculation inherits a rounding error.
-Each measurement gets its own precision in the report: one decimal for heart
-rate, skin response and temperature, two for `activity_level`. A 0 to 1 scale at
-one decimal only has ten possible values, and anything under 0.05 would collapse
-to zero.
+Stored values keep full precision, so no calculation works from a rounded input.
+Each measurement has its own precision in the report: one decimal for heart
+rate, skin response and temperature, and two for `activity_level`, which is a
+0 to 1 scale where one decimal leaves only ten possible values.
 
 ### Bad records never become objects
 
-`from_dict()` raises before an `Observation` exists, so a rejected reading cannot
-reach the summary statistics even if some future caller passes the wrong list
-around.
+`from_dict()` raises before an `Observation` is created, so a rejected reading
+cannot reach the summary statistics.
 
 ---
 
@@ -459,12 +426,12 @@ moderate activity, high activity, recovery, poor quality). The other three are
 hand-written, each covering something the generator cannot produce:
 
 - the same recovery data judged as an `Athlete`, so the overridden recovery
-  threshold appears in ordinary output rather than only in a test
-- a degraded-sensor session of 10 readings, 3 rejected and 2 flagged, which is
-  the only scenario where a reading is kept despite being doubtful and the only
-  one where a session survives a faulty sensor and still earns a real label
-- a three-reading session, because `generate_fitness_data()` refuses fewer than
-  six windows and so cannot produce a session too short to judge
+  threshold appears in ordinary output as well as in the tests
+- a degraded-sensor session of 10 readings, 3 rejected and 2 flagged. No
+  generated scenario produces a signal quality in the 0.50 to 0.69 band, so this
+  is the only place a reading is kept despite being doubtful
+- a three-reading session, because `generate_fitness_data()` requires at least
+  six windows and cannot produce a session too short to judge
 
 ---
 
@@ -480,23 +447,15 @@ values, the `Participant` property checks, `from_profile()` and its `Athlete`
 variant, the calculations, the skin response comparison, each of the five
 classifications, recovery detection, the generated data, and the report.
 
-I also checked the tests themselves by mutation, since a suite that passes tells
-you nothing unless it also fails when the code is wrong. Breaking the
-signal-quality cutoff, the athlete's recovery threshold, the "something to
-recover from" condition, the five-observation minimum, the `from_profile` field
-mapping, and the skin response guard each produced a test failure. All six were
-caught.
-
 ---
 
 ## Known limitations
 
 - The thresholds are judgement calls. The signal-quality cutoffs of 0.50 and
   0.70, the 20% and 50% reserve fractions, the 0.20 and 0.60 activity levels,
-  the 10% and 15% recovery drops and the five-observation minimum are all
-  defensible, but none of them is derived from data. They are named constants
-  with the reasoning written down rather than numbers buried in conditionals, so
-  changing one is a single edit.
+  the 10% and 15% recovery drops and the five-observation minimum are not
+  derived from data. They are named constants, so each can be changed in one
+  place.
 - Maximum heart rate defaults to 190. It can be set per participant, but the
   generator does not supply one, so every generated participant uses the
   default. Anyone whose real maximum differs will have their bands shifted.
