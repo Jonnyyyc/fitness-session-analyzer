@@ -836,3 +836,135 @@ trimming both would have broken the rejection messages.
 
 28 tests still pass, `main.py` still produces the six expected labels, and both
 README example blocks still match real output.
+
+---
+
+## Section 12: Generator integration
+
+Instructor-supplied starter files arrived after Section 11: `data_generator.py`,
+`example_usage.py` and `DATA_DESCRIPTION.md`. The marker will run this program
+against `generate_fitness_data()`, so the demonstration data now comes from
+there rather than from records I wrote by hand.
+
+### What was built
+
+`data_generator.py` copied into the repository unchanged, a second alternative
+constructor in `Participant`, a skin-response comparison, `sample_data.py`
+rebuilt around the generator, and seven new tests.
+
+Only the generator was added. `example_usage.py` and `DATA_DESCRIPTION.md` stay
+out of the repository, since the first is a demonstration script this project
+does not need and the second is reference material rather than code.
+
+### Decisions and why
+
+| Decision | Why |
+| --- | --- |
+| `data_generator.py` copied in byte for byte and never edited | It is the instructor's file and the marker's reference point. I verified the copy with a SHA-256 hash against the source, and confirmed afterwards that it has not changed since the commit that added it. Editing it, even to tidy something, would mean the program was tested against a file the marker does not have. |
+| `Participant.from_profile(profile)` as a second `@classmethod` | The generator names its fields differently from this program: `participant_id` rather than `name`, `baseline_heart_rate` rather than `resting_heart_rate`, and so on. Putting that translation in one classmethod means no call site has to know about it, and `sample_data.py` never has to spell out the mapping. |
+| `from_profile` builds with `cls()` rather than naming `Participant` | This is what makes `Athlete.from_profile(profile)` return an `Athlete` with its own 15% recovery bar, inherited rather than reimplemented. Hard-coding the class name would have silently downgraded every athlete to a plain participant. |
+| `from_profile` raises `ValueError` listing every missing field | A `KeyError` naming one field would send someone hunting for a typo. Checking all four first and reporting them together says what shape the profile actually has to be. |
+| `normal_skin_response` defaults to `None` rather than to a number | The generator supplies a baseline, but a participant built by hand has no measured skin response. Giving one a default number would compare the session against a value nobody recorded. |
+| The skin-response block appears in the comparison only when the reference exists | Same reasoning. `compare_to_reference()` adds the block when `normal_skin_response` is set and omits it otherwise, and `format_report()` follows. A hand-made participant's report is unchanged from before. |
+| The README limitation about skin response having no reference was removed | It was true when written, and is not any more. Leaving it would have been a documented weakness the program no longer has. |
+| `seed=42` and `number_of_windows=12`, fixed in `sample_data.py` | The generator is reproducible for a given seed, which is what lets the README paste real output and still have it match on someone else's machine. An unfixed seed would make the example blocks wrong on every run. |
+| Generated participants keep the default maximum heart rate of 190 | The profile carries a baseline heart rate but no maximum, so there is nothing to map. This is now recorded in the README limitations, because it means every generated participant has bands computed from a population figure rather than a measured one. |
+
+### The two hand-made scenarios, and why each survives
+
+Five scenarios come from the generator. Two do not, and both have a reason
+beyond preference.
+
+**The recovery data judged as an `Athlete`.** The observations are the same ones
+the generator produced for the plain recovery session, rebuilt with
+`Athlete.from_profile()`. Because the readings are identical, any difference in
+the report comes from the subclass and nothing else. The report shows
+`15% required` instead of `10% required`. Without this scenario, an ordinary run
+of `main.py` would never exercise the override at all, and the inheritance would
+only be visible inside `tests.py`.
+
+**The three-reading session.** `generate_fitness_data()` raises `ValueError` for
+fewer than six windows, so it cannot produce a session too short to judge. The
+minimum-usable rule needs fewer than five usable readings to fire on its own
+merits, which means this case has to be written by hand or not demonstrated.
+
+### The poor_quality collision
+
+The generator's `poor_quality` scenario injects a fault into every record on a
+`timestamp % 4` cycle: a `None` heart rate, then 265 bpm, then an activity level
+of -0.20, then a `None` skin response. With 12 windows that is 12 faulty records
+and no survivors, so the session classifies as `insufficient data`.
+
+That collides with a distinction drawn back in Section 7. The old hand-written
+"cycle commute" scenario was sized specifically so that some readings survived,
+and the README argued that poor quality and insufficient data are different
+failures: a faulty sensor that still supports a verdict, against perfect
+readings and too few of them. With the generator's version, poor quality
+produces the same label as the too-short session.
+
+I considered keeping the hand-written poor-quality scenario alongside the
+generated one so the degraded-but-usable case was still shown. I did not, for
+two reasons. The marker will run the generator, so the generator's behaviour is
+what the program has to be honest about. And a scenario whose only purpose is to
+demonstrate a nicer outcome than the real data produces is closer to decoration
+than evidence.
+
+What changed instead. The README claim that poor quality "still supports a
+verdict" was removed, because it is no longer true. `main.py` now prints
+`INSUFFICIENT DATA` twice, and the two are distinguished by the counts rather
+than the label: one session has 12 records of which none is usable, the other
+has 3 records all of which are fine. The rejection list on the poor-quality
+report names all 12 reasons, so the difference is visible without reading the
+label.
+
+The flagging path is the real loss here. No generated scenario produces a
+signal quality between 0.50 and 0.69, so the flagged-but-kept tier no longer
+appears in ordinary output. It is still covered by
+`test_signal_quality_boundaries` and by the report tests, but a reader of
+`main.py` alone would not see it.
+
+### Tests added
+
+Seven, bringing the suite to 35.
+
+| Class | Covers |
+| --- | --- |
+| `TestFromProfile` | 3 tests: every field mapped, the `Athlete` variant returning an `Athlete` with a 0.15 bar, and a profile missing fields raising `ValueError` |
+| `TestSkinResponseComparison` | 2 tests: the block present with a reference and absent without one |
+| `TestGeneratedData` | 2 tests: `poor_quality` at seed 42 rejecting all 12 records and classifying as insufficient data, and the same seed reproducing identical data |
+
+Both new behaviours were mutation-checked the same way as Section 8. Swapping
+`baseline_temperature` and `baseline_skin_response` in the mapping was caught,
+and making the skin comparison unconditional was caught. `analyzer.py` was
+restored and verified identical afterwards.
+
+### Updated counts
+
+| | Before | Now |
+| --- | --- | --- |
+| Scenarios in `main.py` | 6 | 7 |
+| Tests | 28 | 35 |
+| Tracked files | 8 | 9 |
+| `TestCase` classes | 6 | 9 |
+| Classmethods | 1 | 2 |
+
+The ninth tracked file is `data_generator.py`. `requirements.txt` now also names
+`random`, which the generator uses and which is standard library like everything
+else.
+
+### Verified
+
+All five generated scenarios classify as their names suggest: resting, moderate
+activity, high activity, recovering, and insufficient data for poor quality.
+With seed 42 the profile gives a baseline heart rate of 78 bpm, so the bands
+come out at 100.4 and 134.0.
+
+The recovery session falls 30.2%, which clears both the 10% and the 15%
+requirement, so both the plain and the trained version are labelled
+`recovering`. The override is still visible in the report text as
+`15% required`. The verdict-changing proof remains
+`test_between_the_bars_separates_participant_from_athlete`, which uses a
+hand-built 10.8% drop sitting between the two bars.
+
+Fresh clone runs clean: seven scenarios with the expected labels, 35 tests OK.
+Both README example blocks match real output.

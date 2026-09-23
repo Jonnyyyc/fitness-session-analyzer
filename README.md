@@ -87,7 +87,7 @@ as a trained participant.
 | `README.md` | This document. | Required by the brief |
 | `main.py` | Entry point. Loops over the sample scenarios and prints a report for each. Holds no logic beyond that loop. | Required by the brief |
 | `sample_data.py` | The seven demonstration scenarios, five built from the generator and two by hand. | Required by the brief |
-| `tests.py` | 35 unit tests across eight `TestCase` classes. | Required by the brief |
+| `tests.py` | 35 unit tests across nine `TestCase` classes. | Required by the brief |
 | `requirements.txt` | Records that the project needs nothing outside the standard library. | Required by the brief |
 | `data_generator.py` | Produces simulated participant profiles and observations. Copied in unchanged and never edited. | Instructor-supplied |
 | `analyzer.py` | All four classes and every standalone function. The whole program lives here. | Added by me |
@@ -470,7 +470,7 @@ python3 -m unittest tests.py      # macOS / Linux
 python -m unittest tests.py       # Windows
 ```
 
-35 tests across eight `TestCase` classes, covering validation and its boundary
+35 tests across nine `TestCase` classes, covering validation and its boundary
 values, the `Participant` property checks, `from_profile()` and its `Athlete`
 variant, the calculations, the skin response comparison, each of the five
 classifications, recovery detection, the generated data, and the report.
