@@ -680,3 +680,68 @@ labels that are already keyed the same way.
 `python main.py` runs clean and produces all six expected labels. The
 poor-quality scenario reports `total=10 usable=7 flagged=2 rejected=3` and still
 receives a real classification, which was the point of sizing it that way.
+
+---
+
+## Section 8 — Tests
+
+**What was built**
+
+`tests.py`: 28 tests in six `TestCase` classes, one per area. 213 lines, a
+little over the ~200 target.
+
+| Class | Covers |
+| --- | --- |
+| `TestValidation` | 8 tests — one per rejection kind, plus the four signal-quality boundaries |
+| `TestParticipant` | 4 tests — the property gate, the resting/maximum cross-check both ways, the `Athlete` override |
+| `TestCalculations` | 4 tests — hand-checked summary, empty input, rejected readings excluded, zone boundaries |
+| `TestClassification` | 6 tests — one per label, plus that the explanation names its figures |
+| `TestRecovery` | 4 tests — the cooldown shape, resting drift, between-the-bars, motionless divide-by-zero |
+| `TestReport` | 2 tests — the report contains label and counts; nothing-usable renders |
+
+**Decisions and why**
+
+| Decision | Why |
+| --- | --- |
+| One `record()` helper with keyword overrides, plus one `analyse()` shortcut | Every test needs a valid record differing in one field. Writing all six fields in each of 28 tests would bury what each test is actually about. Two helpers was the agreed limit; `analyse()` is three lines and removes the same session-building boilerplate from a dozen tests. |
+| The band values are written in comments next to the fixtures | `JONATHAN` is resting 70 → elevated 94.0, high 130.0. A test asserting `heart_rate_zone(94.0, bands) == "elevated"` is meaningless unless the reader knows where 94.0 comes from. The comment saves the reader recomputing the reserve formula. |
+| `subTest` for the range checks | `-40` and `320` are the same rule failing at both ends. `subTest` reports which value failed instead of stopping at the first. |
+| Classification tests use flat heart rates where possible | A constant 105 bpm cannot accidentally satisfy the recovery test, so `test_moderate_activity` fails only if the moderate rule breaks. Tests that could fail for two reasons are harder to read when they go red. |
+| The between-the-bars test asserts on *both* participants in one test | The point is not that each is classified correctly in isolation, it is that identical readings diverge. Splitting it into two tests would lose the comparison the test exists to make. |
+
+**Mutation check — the tests were tested**
+
+A suite that passes proves nothing on its own; it has to fail when the code is
+wrong. Four rules were deliberately broken in `analyzer.py`, one at a time, to
+confirm the suite notices:
+
+| Mutation | Result |
+| --- | --- |
+| `SIGNAL_QUALITY_REJECT` 0.50 → 0.40 | caught — `test_signal_quality_boundaries` |
+| `Athlete` recovery bar 0.15 → 0.10 | caught — `test_between_the_bars_separates_participant_from_athlete` |
+| Removed the "something to recover from" condition | caught — `test_not_detected_when_resting_heart_rate_drifts_down` |
+| `MINIMUM_USABLE_OBSERVATIONS` 5 → 3 | caught — `test_insufficient_data` |
+
+All four were caught, and `analyzer.py` was restored and confirmed byte-identical
+to the committed version afterwards. This is worth mentioning in a viva: the
+third mutation is the interesting one, because removing that condition still
+leaves every *other* test passing — only the resting-drift case notices, which
+is precisely why that test exists.
+
+**Alternatives rejected**
+
+- *Testing `format_report()` by comparing whole output against a stored string* —
+  would break on every wording or spacing change, so it would be deleted or
+  rubber-stamped the first time it failed. Asserting on the few substrings that
+  carry meaning survives cosmetic edits.
+- *A test per scenario in `sample_data.py`* — would duplicate the classification
+  tests using slower, larger fixtures, and tie the suite to demonstration data
+  that exists to be readable rather than to be minimal.
+
+**Result**
+
+```
+Ran 28 tests in 0.007s
+
+OK
+```
