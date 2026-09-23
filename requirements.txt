@@ -1,2 +1,2 @@
 # Standard library only — no external packages required.
-# Uses: math, statistics, unittest (all built into Python).
+# Uses: statistics, textwrap, unittest (all built into Python).

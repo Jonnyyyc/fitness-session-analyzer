@@ -283,7 +283,7 @@ class Observation:
         self.temperature = temperature
         self.activity_level = activity_level
         self.signal_quality = signal_quality
-        self.flags = []  # readable warnings; filled in from Section 3
+        self.flags = []  # readable warnings about a reading that was kept anyway
 
     @classmethod
     def from_dict(cls, raw):

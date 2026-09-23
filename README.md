@@ -55,7 +55,7 @@ All four classes are in `analyzer.py`.
 | --- | --- |
 | `Participant` | A person and their reference measurements: resting heart rate, maximum heart rate, normal skin temperature. Converts those into the thresholds used to judge a session — `heart_rate_bands()` and `recovery_thresholds()`. |
 | `Athlete(Participant)` | A trained participant. Same role, but recovery is judged against a stricter requirement. |
-| `Observation` | One sensor reading: the six-field record from the brief, plus any quality warnings attached to it. |
+| `Observation` | One observation window: the six-field sensor record from the brief, plus any quality warnings attached to it. |
 | `Session` | One recording: a participant and the list of observations taken from them. Accepts or rejects incoming records, keeps count of both, and produces the result dictionary. |
 
 Four classes, deliberately. A separate `Validator` or `Report` class was
