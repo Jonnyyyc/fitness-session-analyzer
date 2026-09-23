@@ -179,9 +179,12 @@ class Participant:
     """
 
     def __init__(self, name, resting_heart_rate, max_heart_rate=190,
-                 normal_temperature=33.0):
+                 normal_temperature=33.0, normal_skin_response=None):
         self.name = name
         self.normal_temperature = normal_temperature
+        # Optional. The generator supplies one, but a participant created
+        # by hand need not, and the comparison is skipped when it is None.
+        self.normal_skin_response = normal_skin_response
         # Set before the resting rate so its setter can tell that there is
         # no maximum to cross-check against yet.
         self._max_heart_rate = None
@@ -190,6 +193,30 @@ class Participant:
         # changes.
         self.resting_heart_rate = resting_heart_rate
         self.max_heart_rate = max_heart_rate
+
+    PROFILE_FIELDS = ("participant_id", "baseline_heart_rate",
+                      "baseline_temperature", "baseline_skin_response")
+
+    @classmethod
+    def from_profile(cls, profile):
+        """Build a participant from the data generator's profile dictionary.
+
+        A second alternative constructor, alongside the plain one. The
+        generator names its fields differently from this program, so the
+        translation lives here rather than being repeated at every call
+        site. Because it builds with cls(), Athlete.from_profile()
+        returns an Athlete.
+        """
+        missing = [f for f in cls.PROFILE_FIELDS if f not in profile]
+        if missing:
+            raise ValueError("profile is missing " + ", ".join(missing))
+
+        return cls(
+            name=profile["participant_id"],
+            resting_heart_rate=profile["baseline_heart_rate"],
+            normal_temperature=profile["baseline_temperature"],
+            normal_skin_response=profile["baseline_skin_response"],
+        )
 
     @property
     def resting_heart_rate(self):
@@ -485,7 +512,7 @@ def compare_to_reference(summary, participant):
     else:
         direction = "below normal"
 
-    return {
+    comparison = {
         "heart_rate": {
             "average": average_heart_rate,
             "zone": heart_rate_zone(average_heart_rate, bands),
@@ -500,6 +527,19 @@ def compare_to_reference(summary, participant):
             "direction": direction,
         },
     }
+
+    # Only when the participant carries a skin-response reference. A
+    # participant built by hand may not, and inventing one would compare
+    # the session against a number nobody measured.
+    if participant.normal_skin_response is not None:
+        average_skin_response = summary["skin_response"]["avg"]
+        comparison["skin_response"] = {
+            "average": average_skin_response,
+            "reference": participant.normal_skin_response,
+            "difference": average_skin_response - participant.normal_skin_response,
+        }
+
+    return comparison
 
 
 def split_into_thirds(observations):
@@ -757,6 +797,12 @@ def format_report(result):
         lines.append(f"                reference "
                      f"{temperature['reference']:.1f} C, difference "
                      f"{temperature['difference']:+.1f} C")
+        if "skin_response" in comparison:
+            skin_response = comparison["skin_response"]
+            lines.append(f"  Skin response {skin_response['average']:.1f} uS")
+            lines.append(f"                reference "
+                         f"{skin_response['reference']:.1f} uS, difference "
+                         f"{skin_response['difference']:+.1f} uS")
     lines.append("")
 
     # 5. Recovery, stated either way.

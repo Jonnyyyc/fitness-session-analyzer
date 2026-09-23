@@ -394,9 +394,6 @@ four were caught by the tests.
 - **Maximum heart rate defaults to 190.** It is settable per participant, but the
   default is a rough population figure rather than a measured value. A
   participant whose real maximum differs will have bands shifted accordingly.
-- **Skin response is summarised but not compared to a reference.** The brief
-  defines resting reference values for heart rate and temperature, but none
-  for skin response, so it appears in the summary table only.
 - **No real sensor input.** Observations come from `sample_data.py` as literal
   dictionaries. There is no file reading, no device interface and no live input.
 - **Timestamps are only used for ordering.** The program assumes readings are
