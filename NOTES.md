@@ -745,3 +745,30 @@ Ran 28 tests in 0.007s
 
 OK
 ```
+
+---
+
+## Section 9 — README
+
+**What was built**
+
+`README.md` in the twelve specified sections, written from this file.
+
+**Decisions and why**
+
+| Decision | Why |
+| --- | --- |
+| Example output was copied from a real run and then verified programmatically | Pasted output rots the moment a format string changes, and a README showing output the program does not produce is worse than one showing none. A check script re-runs `main.py`, extracts the fenced blocks from the README and asserts each appears verbatim in the real output. Both blocks verified. |
+| The two example scenarios are the cycle commute and the interval session | Between them they exercise everything: flagged and rejected readings side by side, a real classification surviving a faulty sensor, recovery detection, and the `Athlete` subclass with its 15% requirement visible in the output. The resting and moderate reports are shorter but demonstrate nothing the other two do not. |
+| Internal helpers are listed as *not* counted | `require_number()`, `describe_value()`, `rejected()` and `split_into_thirds()` are real functions, but counting them towards the required four would pad the number with plumbing. Six functions are named as the standalone ones and the helpers are declared separately, so the count is honest. |
+| The inheritance section states the between-the-bars result with its numbers | "The subclass overrides a method" is a claim about code. "Identical readings give `recovering` for one and `moderate activity` for the other" is a claim about behaviour, and names the test that proves it. |
+| Known limitations includes things not asked for | Timestamps being used only for ordering, and the single weak-signal tier, are genuine weaknesses that were not on the specified list. A limitations section that lists only the limitations one was told to list is a weaker document. |
+| No marketing tone, no feature claims | The README describes what the program does and where each requirement is met. Anything else is padding a marker has to read past. |
+
+**Verified**
+
+Both fenced report blocks appear verbatim in the output of a fresh
+`python main.py`. All eleven function names cited in the README exist in
+`analyzer.py`, and `Athlete` was confirmed to override exactly
+`recovery_thresholds` and `describe` — not `heart_rate_bands`, as the README
+states.
